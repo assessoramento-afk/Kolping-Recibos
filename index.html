@@ -1710,7 +1710,11 @@ function renderConfig(){
   const br=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap"});
   br.append(
     el("button",{class:"btn",onclick:exportData},"⬇ Baixar backup (.json)"),
-    el("button",{class:"btn",onclick:()=>$("#importFile").click()},"⬆ Restaurar backup"),
+    el("button",{class:"btn",onclick:()=>{
+      let inp=document.getElementById("importFile");
+      if(!inp){inp=document.createElement("input");inp.type="file";inp.id="importFile";inp.accept=".json";inp.style.display="none";inp.addEventListener("change",importData);document.body.appendChild(inp);}
+      inp.click();
+    }},"⬆ Restaurar backup"),
     el("button",{class:"btn",onclick:()=>{
       let inp=document.getElementById("importCKFile");
       if(!inp){inp=document.createElement("input");inp.type="file";inp.id="importCKFile";inp.accept=".csv,.xlsx,.xls";inp.style.display="none";inp.addEventListener("change",importarCKs);document.body.appendChild(inp);}

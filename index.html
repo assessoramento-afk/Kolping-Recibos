@@ -10,7 +10,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --ink:#F0ECE8; --ink-soft:#8A8FA8; --ink-muted:#5A6080;
@@ -271,8 +270,8 @@ tbody tr:hover{background:rgba(240,120,48,.06)}
     <nav class="nav" id="nav"></nav>
     <div class="side-foot" id="sidefoot">Dados salvos neste navegador.<br>Faça backup em Configurações.</div>
     <div id="driveStatusBtn" class="drive-status disconnected" onclick="toggleDriveLogin()">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-      <span id="driveStatusTxt">Conectar Google Drive</span>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 2L2 7l4 5-4 5 4 5 4-5-4-5 4-5zm12 0l4 5-4 5 4 5-4 5-4-5 4-5-4-5z"/></svg>
+      <span id="driveStatusTxt">Conectar Dropbox</span>
     </div>
   </aside>
   <div class="scrim" id="scrim" onclick="toggleMenu(false)"></div>
@@ -1691,23 +1690,37 @@ function renderConfig(){
   bd4.appendChild(el("input",{type:"file",id:"importCKFile",accept:".csv,.xlsx,.xls",style:"display:none",onchange:importarCKs}));
   card5.appendChild(bd4);c.appendChild(card5);
 
-  // Card Google Drive
+  // Card Dropbox
   const cardDrive=el("div",{class:"card"});cardDrive.style.marginTop="20px";
-  cardDrive.appendChild(el("div",{class:"hd"},el("h2",{},"Google Drive — sincronização automática")));
+  cardDrive.appendChild(el("div",{class:"hd"},el("h2",{},"Dropbox — sincronização automática")));
   const bdDrive=el("div",{class:"bd"});
-  const driveStatus=_driveToken?`<div style="display:flex;align-items:center;gap:8px;color:var(--ok);font-weight:600;margin-bottom:12px"><span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block"></span>Conectado ao Google Drive</div>`:`<div style="color:var(--ink-soft);font-size:13.5px;margin-bottom:12px">Não conectado. Configure seu Client ID e conecte para sincronizar automaticamente.</div>`;
-  bdDrive.innerHTML=`${driveStatus}
-    <div class="field"><label>Client ID do Google <span class="hint">(<a href="https://console.cloud.google.com" target="_blank" style="color:var(--brand)">como obter?</a>)</span></label>
-    <input class="input" id="c_driveClientId" placeholder="000000000000-xxxxxxxx.apps.googleusercontent.com" value="${esc(S.config.driveClientId||"")}"></div>`;
+  const dbxConectado=!!(_dbxToken||S.config.dropboxToken);
+  bdDrive.innerHTML=`
+    ${dbxConectado?`<div style="display:flex;align-items:center;gap:8px;color:var(--ok);font-weight:600;margin-bottom:12px"><span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block"></span>Conectado ao Dropbox</div>`:`<div style="color:var(--ink-soft);font-size:13.5px;margin-bottom:12px">Não conectado. Gere um token no Dropbox e cole abaixo para sincronizar automaticamente.</div>`}
+    <div class="field"><label>Token de acesso do Dropbox</label>
+    <input class="input" id="c_dbxToken" type="password" placeholder="sl.xxxxxxxxxxxxxxxx..." value="${esc(S.config.dropboxToken||"")}">
+    <span class="hint">Gere em dropbox.com/developers/apps → seu app → Settings → Generate access token</span></div>`;
   const driveBtns=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap"});
   driveBtns.append(
-    el("button",{class:"btn primary",onclick:()=>{S.config.driveClientId=document.getElementById("c_driveClientId").value.trim();save();iniciarLoginDrive();}},"Conectar ao Drive"),
-    el("button",{class:"btn",onclick:driveSalvar,disabled:!_driveToken},"⬆ Salvar no Drive agora"),
-    el("button",{class:"btn",onclick:driveCarregar,disabled:!_driveToken},"⬇ Carregar do Drive"),
-    el("button",{class:"btn ghost danger",onclick:()=>{if(_driveToken){_driveToken=null;_driveFileId=null;localStorage.removeItem("kolping_drive_token");driveSetStatus("disconnected","Conectar Google Drive");renderConfig();toast("Desconectado.");}},disabled:!_driveToken},"Desconectar")
+    el("button",{class:"btn primary",onclick:()=>{
+      const v=document.getElementById("c_dbxToken").value.trim();
+      if(!v){iniciarLoginDropbox();return;}
+      S.config.dropboxToken=v;_dbxToken=v;
+      localStorage.setItem("kolping_dbx_token",v);
+      save();dbxSetStatus("connected","Dropbox conectado ✓");
+      toast("Dropbox conectado!");dbxSyncAuto();renderConfig();
+    }},"Conectar ao Dropbox"),
+    el("button",{class:"btn",onclick:dbxSalvar,disabled:!dbxConectado},"⬆ Salvar no Dropbox agora"),
+    el("button",{class:"btn",onclick:dbxCarregar,disabled:!dbxConectado},"⬇ Carregar do Dropbox"),
+    el("button",{class:"btn ghost danger",onclick:()=>{
+      _dbxToken=null;S.config.dropboxToken="";
+      localStorage.removeItem("kolping_dbx_token");
+      save();dbxSetStatus("disconnected","Conectar Dropbox");
+      renderConfig();toast("Desconectado do Dropbox.");
+    },disabled:!dbxConectado},"Desconectar")
   );
   bdDrive.appendChild(driveBtns);
-  bdDrive.innerHTML+=`<p style="font-size:12px;color:var(--ink-muted);margin-top:12px">Os dados são salvos automaticamente 3 segundos após cada alteração e sincronizados a cada 2 minutos.</p>`;
+  bdDrive.innerHTML+=`<p style="font-size:12px;color:var(--ink-muted);margin-top:12px">Os dados são salvos automaticamente 3 segundos após cada alteração e sincronizados a cada 2 minutos. Funciona em qualquer navegador ou computador.</p>`;
   cardDrive.appendChild(bdDrive);c.appendChild(cardDrive);
 }
 function uploadBox(label,val,key){
@@ -2242,14 +2255,11 @@ window.addEventListener("beforeunload",e=>{
   }
 });
 
-/* ============ GOOGLE DRIVE SYNC ============ */
-const DRIVE_SCOPES="https://www.googleapis.com/auth/drive.appdata";
-const DRIVE_FILE_NAME="kolping_recibos_dados.json";
-let _driveToken=null, _driveFileId=null, _driveSyncing=false;
+/* ============ DROPBOX SYNC ============ */
+const DBX_FILE_PATH="/kolping_recibos_dados.json";
+let _dbxToken=null,_dbxSyncing=false;
 
-function getDriveClientId(){return S.config.driveClientId||"";}
-
-function driveSetStatus(status,txt){
+function dbxSetStatus(status,txt){
   const btn=document.getElementById("driveStatusBtn");
   const lbl=document.getElementById("driveStatusTxt");
   if(!btn||!lbl)return;
@@ -2258,171 +2268,131 @@ function driveSetStatus(status,txt){
 }
 
 function toggleDriveLogin(){
-  if(_driveToken){
-    confirmBox("Desconectar do Google Drive? Os dados continuarão salvos localmente.",()=>{
-      _driveToken=null;_driveFileId=null;
-      localStorage.removeItem("kolping_drive_token");
-      driveSetStatus("disconnected","Conectar Google Drive");
-      toast("Desconectado do Google Drive.");
+  if(_dbxToken){
+    confirmBox("Desconectar do Dropbox? Os dados continuarão salvos localmente.",()=>{
+      _dbxToken=null;
+      localStorage.removeItem("kolping_dbx_token");
+      dbxSetStatus("disconnected","Conectar Dropbox");
+      toast("Desconectado do Dropbox.");
     });
   } else {
-    iniciarLoginDrive();
+    iniciarLoginDropbox();
   }
 }
 
-function iniciarLoginDrive(){
-  const clientId=getDriveClientId();
-  if(!clientId){
-    openModal("Configurar Google Drive",`
-      <p style="font-size:14px;line-height:1.7;margin-bottom:16px">Para usar o Google Drive, você precisa de um <b>Client ID</b> do Google Cloud. Siga os passos:</p>
-      <ol style="font-size:13.5px;line-height:2;color:var(--ink-soft);padding-left:20px">
-        <li>Acesse <a href="https://console.cloud.google.com" target="_blank" style="color:var(--brand)">console.cloud.google.com</a></li>
-        <li>Crie um novo projeto (ex.: <b>Kolping Recibos</b>)</li>
-        <li>Vá em <b>APIs e Serviços → Biblioteca</b> e ative a <b>Google Drive API</b></li>
-        <li>Vá em <b>APIs e Serviços → Credenciais → Criar credenciais → ID do cliente OAuth</b></li>
-        <li>Tipo: <b>Aplicativo da Web</b>. Em "Origens JavaScript autorizadas" deixe em branco</li>
-        <li>Copie o <b>Client ID</b> gerado e cole abaixo</li>
-      </ol>
-      <div class="field" style="margin-top:16px"><label>Client ID do Google</label><input class="input" id="driveClientInput" placeholder="000000000000-xxxxxxxx.apps.googleusercontent.com" value="${esc(clientId)}"></div>
-    `,null,[{label:"Cancelar",cls:"ghost",fn:closeModal},{label:"Salvar e conectar",cls:"primary",fn:()=>{
-      const v=document.getElementById("driveClientInput").value.trim();
-      if(!v){toast("Informe o Client ID.");return;}
-      S.config.driveClientId=v;save();closeModal();
-      setTimeout(iniciarLoginDrive,300);
-    }}]);
-    return;
-  }
-  // tentar token salvo primeiro
-  const saved=localStorage.getItem("kolping_drive_token");
-  if(saved){try{const t=JSON.parse(saved);if(t.expiry>Date.now()){_driveToken=t.token;driveSetStatus("connected","Drive conectado ✓");driveSyncAuto();return;}}catch(e){}}
-  // verificar se voltamos de um redirect OAuth (hash na URL)
-  if(location.hash&&location.hash.includes("access_token")){
-    const params=new URLSearchParams(location.hash.slice(1));
-    const token=params.get("access_token");
-    const expiresIn=+params.get("expires_in")||3600;
-    if(token){
-      _driveToken=token;
-      localStorage.setItem("kolping_drive_token",JSON.stringify({token,expiry:Date.now()+expiresIn*1000-60000}));
-      // limpar hash da URL
-      history.replaceState(null,null,location.pathname);
-      driveSetStatus("connected","Drive conectado ✓");
-      toast("Google Drive conectado!");
-      driveSyncAuto();
-      return;
-    }
-  }
-  // OAuth redirect — salvar estado antes de sair
-  localStorage.setItem("kolping_drive_pending","1");
-  driveSetStatus("syncing","Redirecionando para o Google…");
-  // usar a URL atual como redirect (funciona com file://)
-  const redirectUri=location.href.split("#")[0];
-  const url=`https://accounts.google.com/o/oauth2/v2/auth?`+
-    `client_id=${encodeURIComponent(clientId)}&`+
-    `redirect_uri=${encodeURIComponent(redirectUri)}&`+
-    `response_type=token&`+
-    `scope=${encodeURIComponent(DRIVE_SCOPES)}&`+
-    `prompt=consent`;
-  setTimeout(()=>{location.href=url;},300);
+function iniciarLoginDropbox(){
+  const token=S.config.dropboxToken||"";
+  openModal("Conectar Dropbox",`
+    <p style="font-size:14px;line-height:1.7;margin-bottom:16px">Para usar o Dropbox, gere um token de acesso seguindo os passos:</p>
+    <ol style="font-size:13.5px;line-height:2;color:var(--ink-soft);padding-left:20px">
+      <li>Acesse <a href="https://www.dropbox.com/developers/apps" target="_blank" style="color:var(--brand)">dropbox.com/developers/apps</a></li>
+      <li>Clique em <b>Create app</b></li>
+      <li>Escolha <b>Scoped access</b> → <b>Full Dropbox</b></li>
+      <li>Dê um nome: <b>KolpingRecibos</b> e clique em <b>Create app</b></li>
+      <li>Na aba <b>Permissions</b>, marque: <b>files.content.read</b> e <b>files.content.write</b> → clique em <b>Submit</b></li>
+      <li>Na aba <b>Settings</b>, role até <b>OAuth 2</b> → clique em <b>Generate</b> (ao lado de "Generated access token")</li>
+      <li>Copie o token gerado e cole abaixo</li>
+    </ol>
+    <div class="field" style="margin-top:16px"><label>Token de acesso do Dropbox</label>
+    <input class="input" id="dbxTokenInput" placeholder="sl.xxxxxxxxxxxxxxxx..." value="${esc(token)}" type="password"></div>
+    <p style="font-size:12px;color:var(--ink-muted);margin-top:8px">⚠️ O token dá acesso à sua conta Dropbox. Guarde com segurança e não compartilhe.</p>
+  `,null,[
+    {label:"Cancelar",cls:"ghost",fn:closeModal},
+    {label:"Conectar",cls:"primary",fn:()=>{
+      const v=document.getElementById("dbxTokenInput").value.trim();
+      if(!v){toast("Informe o token.");return;}
+      S.config.dropboxToken=v;save();
+      _dbxToken=v;
+      localStorage.setItem("kolping_dbx_token",v);
+      closeModal();
+      dbxSetStatus("connected","Dropbox conectado ✓");
+      toast("Dropbox conectado!");
+      dbxSyncAuto();
+    }}
+  ]);
 }
 
-async function driveRequest(method,url,body,contentType){
-  if(!_driveToken)return null;
-  const opts={method,headers:{Authorization:"Bearer "+_driveToken}};
-  if(body){opts.body=body;opts.headers["Content-Type"]=contentType||"application/json";}
+async function dbxRequest(path,body,isDownload=false){
+  if(!_dbxToken)return null;
   try{
-    const r=await fetch(url,opts);
-    if(r.status===401){_driveToken=null;localStorage.removeItem("kolping_drive_token");driveSetStatus("disconnected","Conectar Google Drive");return null;}
+    const headers={"Authorization":"Bearer "+_dbxToken,"Content-Type":"application/json"};
+    const opts={method:"POST",headers};
+    if(body!==undefined)opts.body=JSON.stringify(body);
+    const r=await fetch("https://api.dropboxapi.com/2/"+path,opts);
+    if(r.status===401){_dbxToken=null;localStorage.removeItem("kolping_dbx_token");S.config.dropboxToken="";save();dbxSetStatus("disconnected","Conectar Dropbox");toast("Token inválido. Reconecte o Dropbox.");return null;}
     if(!r.ok)return null;
-    const ct=r.headers.get("Content-Type")||"";
-    return ct.includes("json")?r.json():r.text();
+    return r.json();
   }catch(e){return null;}
 }
 
-async function driveFindFile(){
-  const res=await driveRequest("GET",`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${DRIVE_FILE_NAME}'&fields=files(id,name,modifiedTime)`);
-  if(res&&res.files&&res.files.length>0){_driveFileId=res.files[0].id;return res.files[0];}
-  return null;
-}
-
-async function driveSalvar(){
-  if(!_driveToken||_driveSyncing)return;
-  _driveSyncing=true;driveSetStatus("syncing","Salvando no Drive…");
+async function dbxSalvar(){
+  if(!_dbxToken||_dbxSyncing)return;
+  _dbxSyncing=true;dbxSetStatus("syncing","Salvando no Dropbox…");
   try{
     const content=JSON.stringify(S,null,2);
-    const blob=new Blob([content],{type:"application/json"});
-    if(!_driveFileId)await driveFindFile();
-    let res;
-    if(_driveFileId){
-      res=await driveRequest("PATCH",`https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=media`,blob,"application/json");
-    }else{
-      // criar na pasta appDataFolder
-      const meta=JSON.stringify({name:DRIVE_FILE_NAME,parents:["appDataFolder"]});
-      const form=new FormData();
-      form.append("metadata",new Blob([meta],{type:"application/json"}));
-      form.append("file",blob);
-      const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+_driveToken},body:form});
-      res=r.ok?await r.json():null;
-      if(res&&res.id)_driveFileId=res.id;
-    }
-    if(res!==null){driveSetStatus("connected","Drive salvo ✓ — "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}));}
-    else{driveSetStatus("connected","Drive conectado ✓");}
-  }catch(e){driveSetStatus("connected","Drive conectado ✓");}
-  finally{_driveSyncing=false;}
+    const r=await fetch("https://content.dropboxapi.com/2/files/upload",{
+      method:"POST",
+      headers:{
+        "Authorization":"Bearer "+_dbxToken,
+        "Dropbox-API-Arg":JSON.stringify({path:DBX_FILE_PATH,mode:"overwrite",autorename:false,mute:true}),
+        "Content-Type":"application/octet-stream"
+      },
+      body:content
+    });
+    if(r.ok){dbxSetStatus("connected","Dropbox salvo ✓ — "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}));}
+    else{dbxSetStatus("connected","Dropbox conectado ✓");}
+  }catch(e){dbxSetStatus("connected","Dropbox conectado ✓");}
+  finally{_dbxSyncing=false;}
 }
 
-async function driveCarregar(){
-  if(!_driveToken)return false;
-  driveSetStatus("syncing","Carregando do Drive…");
+async function dbxCarregar(){
+  if(!_dbxToken)return false;
+  dbxSetStatus("syncing","Carregando do Dropbox…");
   try{
-    const file=await driveFindFile();
-    if(!file){driveSetStatus("connected","Drive conectado ✓");return false;}
-    const content=await driveRequest("GET",`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`);
-    if(!content){driveSetStatus("connected","Drive conectado ✓");return false;}
-    const parsed=typeof content==="string"?JSON.parse(content):content;
-    if(!parsed.config||!Array.isArray(parsed.comunidades)){driveSetStatus("connected","Drive conectado ✓");return false;}
+    const r=await fetch("https://content.dropboxapi.com/2/files/download",{
+      method:"POST",
+      headers:{
+        "Authorization":"Bearer "+_dbxToken,
+        "Dropbox-API-Arg":JSON.stringify({path:DBX_FILE_PATH})
+      }
+    });
+    if(!r.ok){dbxSetStatus("connected","Dropbox conectado ✓");return false;}
+    const text=await r.text();
+    const parsed=JSON.parse(text);
+    if(!parsed.config||!Array.isArray(parsed.comunidades)){dbxSetStatus("connected","Dropbox conectado ✓");return false;}
     S=Object.assign(defaultState(),parsed,{config:Object.assign(defaultState().config,parsed.config||{}),overrides:Object.assign({},parsed.overrides||{}),creditos:Object.assign({},parsed.creditos||{})});
-    save();go("dashboard");driveSetStatus("connected","Drive sincronizado ✓");
-    toast("Dados carregados do Google Drive!");
+    save();go("dashboard");dbxSetStatus("connected","Dropbox sincronizado ✓");
+    toast("Dados carregados do Dropbox!");
     return true;
-  }catch(e){driveSetStatus("connected","Drive conectado ✓");return false;}
+  }catch(e){dbxSetStatus("connected","Dropbox conectado ✓");return false;}
 }
 
-let _driveAutoTimer=null;
-function driveSyncAuto(){
-  // carrega ao conectar
-  driveCarregar();
-  // salva a cada 2 minutos automaticamente
-  clearInterval(_driveAutoTimer);
-  _driveAutoTimer=setInterval(()=>{if(_driveToken)driveSalvar();},120000);
+let _dbxAutoTimer=null;
+function dbxSyncAuto(){
+  dbxCarregar();
+  clearInterval(_dbxAutoTimer);
+  _dbxAutoTimer=setInterval(()=>{if(_dbxToken)dbxSalvar();},120000);
 }
 
+// alias para compatibilidade com botões existentes
+function driveSalvar(){dbxSalvar();}
+function driveCarregar(){dbxCarregar();}
+function iniciarLoginDrive(){iniciarLoginDropbox();}
 
 /* ============ INIT ============ */
 buildNav();go("dashboard");setTimeout(renderAvisos,100);
 aplicarTema();
 const _tBtn=document.getElementById("temaBtn");
 if(_tBtn)_tBtn.textContent=_temaEscuro?"☀ Tema claro":"🌙 Tema escuro";
-// verificar retorno OAuth do Google
-(function checkOAuthReturn(){
-  const pending=localStorage.getItem("kolping_drive_pending");
-  if(pending&&location.hash&&location.hash.includes("access_token")){
-    localStorage.removeItem("kolping_drive_pending");
-    const params=new URLSearchParams(location.hash.slice(1));
-    const token=params.get("access_token");
-    const expiresIn=+params.get("expires_in")||3600;
-    if(token){
-      _driveToken=token;
-      localStorage.setItem("kolping_drive_token",JSON.stringify({token,expiry:Date.now()+expiresIn*1000-60000}));
-      history.replaceState(null,null,location.pathname);
-      driveSetStatus("connected","Drive conectado ✓");
-      toast("Google Drive conectado!");
-      driveSyncAuto();
-      return;
-    }
+// reconectar Dropbox se havia token salvo
+(function checkDropboxToken(){
+  const saved=localStorage.getItem("kolping_dbx_token")||S.config.dropboxToken||"";
+  if(saved){
+    _dbxToken=saved;
+    localStorage.setItem("kolping_dbx_token",saved);
+    dbxSetStatus("connected","Dropbox conectado ✓");
+    dbxSyncAuto();
   }
-  // reconectar com token salvo
-  const saved=localStorage.getItem("kolping_drive_token");
-  if(saved){try{const t=JSON.parse(saved);if(t.expiry>Date.now()){_driveToken=t.token;driveSetStatus("connected","Drive conectado ✓");driveSyncAuto();}}catch(e){}}
 })();
 function updateBrandLogo(){
   const el=document.getElementById("brandLogo");

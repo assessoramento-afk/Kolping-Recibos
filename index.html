@@ -342,7 +342,7 @@ function load(){
 }
 function save(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(S));setTimeout(renderAvisos,50);}catch(e){toast("Erro ao salvar. Verifique o espaço do navegador.");}
-  if(_driveToken&&!_driveSyncing){
+  if(_dbxToken&&!_dbxSyncing){
     clearTimeout(save._driveDebounce);
     save._driveDebounce=setTimeout(driveSalvar,3000);
   }

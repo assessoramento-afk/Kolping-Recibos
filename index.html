@@ -950,7 +950,7 @@ function formComunidade(id){
     if(!Object.keys(apa).length)apa[ANO_ATUAL]={ef:0,co:0};
     const ak=apa[ANO_ATUAL]?ANO_ATUAL:Math.max(...Object.keys(apa).map(Number));
     const atual=apa[ak];
-    const data={codigo:cod,nome,cnpj:$("#f_cnpj").value.trim(),responsavel:$("#f_resp").value.trim(),telefone:$("#f_tel").value.trim(),email:$("#f_email").value.trim(),notas:$("#f_notas").value.trim(),associadosPorAno:apa,efetivos:atual.ef,cooperadores:atual.co};
+    const data={nome,cnpj:$("#f_cnpj").value.trim(),responsavel:$("#f_resp").value.trim(),telefone:$("#f_tel").value.trim(),email:$("#f_email").value.trim(),notas:$("#f_notas").value.trim(),associadosPorAno:apa,efetivos:atual.ef,cooperadores:atual.co};
     if(id)Object.assign(comunidade(id),data);else S.comunidades.push(Object.assign({id:uid()},data));
     save();render();toast("Comunidade salva.");
   },null,"wide");

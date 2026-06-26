@@ -1710,14 +1710,14 @@ function renderConfig(){
       save();dbxSetStatus("connected","Dropbox conectado ✓");
       toast("Dropbox conectado!");dbxSyncAuto();renderConfig();
     }},"Conectar ao Dropbox"),
-    el("button",{class:"btn",onclick:dbxSalvar,disabled:!dbxConectado},"⬆ Salvar no Dropbox agora"),
-    el("button",{class:"btn",onclick:dbxCarregar,disabled:!dbxConectado},"⬇ Carregar do Dropbox"),
+    el("button",{class:"btn",onclick:dbxSalvar},"⬆ Salvar no Dropbox agora"),
+    el("button",{class:"btn",onclick:dbxCarregar},"⬇ Carregar do Dropbox"),
     el("button",{class:"btn ghost danger",onclick:()=>{
       _dbxToken=null;S.config.dropboxToken="";
       localStorage.removeItem("kolping_dbx_token");
       save();dbxSetStatus("disconnected","Conectar Dropbox");
       renderConfig();toast("Desconectado do Dropbox.");
-    },disabled:!dbxConectado},"Desconectar")
+    }},"Desconectar")
   );
   bdDrive.appendChild(driveBtns);
   bdDrive.innerHTML+=`<p style="font-size:12px;color:var(--ink-muted);margin-top:12px">Os dados são salvos automaticamente 3 segundos após cada alteração e sincronizados a cada 2 minutos. Funciona em qualquer navegador ou computador.</p>`;
@@ -2389,6 +2389,7 @@ if(_tBtn)_tBtn.textContent=_temaEscuro?"☀ Tema claro":"🌙 Tema escuro";
   const saved=localStorage.getItem("kolping_dbx_token")||S.config.dropboxToken||"";
   if(saved){
     _dbxToken=saved;
+    S.config.dropboxToken=saved;
     localStorage.setItem("kolping_dbx_token",saved);
     dbxSetStatus("connected","Dropbox conectado ✓");
     dbxSyncAuto();

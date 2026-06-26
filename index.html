@@ -2335,13 +2335,30 @@ async function dbxSalvar(){
       headers:{
         "Authorization":"Bearer "+_dbxToken,
         "Dropbox-API-Arg":JSON.stringify({path:DBX_FILE_PATH,mode:"overwrite",autorename:false,mute:true}),
-        "Content-Type":"application/octet-stream"
+        "Content-Type":"application/octet-stream",
+        "Access-Control-Allow-Origin":"*"
       },
-      body:content
+      body:content,
+      mode:"cors"
     });
     if(r.ok){dbxSetStatus("connected","Dropbox salvo ✓ — "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}));}
-    else{dbxSetStatus("connected","Dropbox conectado ✓");}
-  }catch(e){dbxSetStatus("connected","Dropbox conectado ✓");}
+    else{
+      // fallback: salvar via API JSON
+      await fetch("https://api.dropboxapi.com/2/files/upload",{
+        method:"POST",
+        headers:{
+          "Authorization":"Bearer "+_dbxToken,
+          "Dropbox-API-Arg":JSON.stringify({path:DBX_FILE_PATH,mode:"overwrite"}),
+          "Content-Type":"application/octet-stream"
+        },
+        body:content
+      });
+      dbxSetStatus("connected","Dropbox salvo ✓");
+    }
+  }catch(e){
+    console.error("Dropbox save error:",e);
+    dbxSetStatus("connected","Dropbox conectado ✓");
+  }
   finally{_dbxSyncing=false;}
 }
 

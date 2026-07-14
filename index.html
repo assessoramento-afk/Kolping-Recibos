@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --ink:#F0ECE8; --ink-soft:#8A8FA8; --ink-muted:#5A6080;
@@ -56,6 +57,12 @@ a{color:var(--brand)}
 .drive-status.disconnected{background:rgba(255,255,255,.05);border-color:var(--line);color:var(--sidebar-soft)}
 .drive-status.syncing{background:rgba(240,120,48,.12);border-color:rgba(240,120,48,.25);color:var(--brand);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+@keyframes blink{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,82,99,.5)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(255,82,99,0)}}
+.badge-enviado{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;cursor:pointer;border:none;transition:all .2s;white-space:nowrap}
+.badge-enviado.ok{background:rgba(34,201,132,.12);color:#22C984;border:1px solid rgba(34,201,132,.25)}
+.badge-enviado.ok:hover{background:rgba(34,201,132,.2)}
+.badge-enviado.pendente{background:rgba(255,82,99,.12);color:#FF5263;border:1px solid rgba(255,82,99,.3);animation:blink 1.6s ease-in-out infinite}
+.badge-enviado.pendente:hover{animation:none;background:rgba(255,82,99,.22)}
 .main{flex:1;margin-left:256px;min-width:0}
 .topbar{height:62px;background:rgba(19,21,31,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:30;gap:16px}
 .topbar h1{font-size:17px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;color:var(--ink)}
@@ -181,7 +188,7 @@ tbody tr:hover{background:rgba(240,120,48,.06)}
 .r-divider{border:0;border-top:1px dashed #EDE8E0;margin:18px 0}
 .r-localdata{font-size:13px;color:#5A4E46;text-align:right;margin-bottom:28px}
 .r-sign{display:flex;flex-direction:column;align-items:center}
-.r-sign img{max-height:90px;display:block;margin-bottom:0}
+.r-sign img{max-height:160px;display:block;margin-bottom:0}
 .r-sign .ln{border-top:1.5px solid #1A1614;width:240px;text-align:center;padding-top:8px;margin-top:0}
 .r-sign .nm{font-size:13px;font-weight:700;color:#1A1614;letter-spacing:-.01em}
 .r-sign .rl{font-size:11px;color:#6B5E54;margin-top:1px}
@@ -326,7 +333,10 @@ const defaultState = () => ({
     diaVenc:15,
     cidade:"Carapicuíba",
     logo:"", assinatura:"",
-    senha:"", sessaoMins:0
+    senha:"", sessaoMins:0,
+    eventoNome:"Seminário Kolping de Gestão & Inovação do Terceiro Setor",
+    eventoValor:265.00,
+    eventoSeq:1
   },
   comunidades:[],
   entidades:[],
@@ -338,17 +348,79 @@ const defaultState = () => ({
   seq:1
 });
 
-let S = load();
-function load(){
+/* ============ SUPABASE ============ */
+const SUPABASE_URL="https://aevugrmtduzndpavhvca.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFldnVncm10ZHV6bmRwYXZodmNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMDQ0MDYsImV4cCI6MjA5OTU4MDQwNn0.vM4moi-SJZrP4JZSHpATnHrsvKaETtavYk_Fsk9lJT0";
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+let _sbUser=null,_sbPerfil=null,_sbSyncing=false,_sbCarregado=false;
+
+let S = defaultState(); // começa vazio; dados reais vêm do Supabase após login
+
+// cache local (fallback offline de leitura)
+function cacheLocal(){try{localStorage.setItem(LS_KEY,JSON.stringify(S));}catch(e){}}
+function lerCacheLocal(){
   try{const r=localStorage.getItem(LS_KEY);if(r){const p=JSON.parse(r);return Object.assign(defaultState(),p,{config:Object.assign(defaultState().config,p.config||{}),overrides:Object.assign({},p.overrides||{}),creditos:Object.assign({},p.creditos||{})});}}catch(e){}
-  return defaultState();
+  return null;
 }
-function save(){
-  try{localStorage.setItem(LS_KEY,JSON.stringify(S));setTimeout(renderAvisos,50);}catch(e){toast("Erro ao salvar. Verifique o espaço do navegador.");}
-  if(_dbxToken&&!_dbxSyncing){
-    clearTimeout(save._driveDebounce);
-    save._driveDebounce=setTimeout(driveSalvar,3000);
+
+// carregar dados do Supabase
+async function carregarDados(){
+  try{
+    const{data,error}=await sb.from("kolping_data").select("dados").eq("id","main").maybeSingle();
+    if(error)throw error;
+    if(data&&data.dados&&Object.keys(data.dados).length){
+      const p=data.dados;
+      S=Object.assign(defaultState(),p,{config:Object.assign(defaultState().config,p.config||{}),overrides:Object.assign({},p.overrides||{}),creditos:Object.assign({},p.creditos||{})});
+      _sbCarregado=true;
+      cacheLocal();
+      return true;
+    }else{
+      // banco vazio — verificar se há dados locais para migrar
+      const local=lerCacheLocal();
+      if(local&&(local.comunidades.length||local.recibos.length)){
+        S=local;
+        await salvarDados(); // migra para o Supabase
+        toast("Dados locais migrados para a nuvem!");
+      }else{
+        S=defaultState();
+      }
+      _sbCarregado=true;
+      return true;
+    }
+  }catch(e){
+    console.error("Erro ao carregar do Supabase:",e);
+    const local=lerCacheLocal();
+    if(local){S=local;toast("Usando dados locais (sem conexão com a nuvem).");}
+    return false;
   }
+}
+
+// salvar dados no Supabase (com debounce)
+async function salvarDados(){
+  if(_sbSyncing)return;
+  _sbSyncing=true;
+  try{
+    S.config.ultimoBackup=new Date().toISOString();
+    const{error}=await sb.from("kolping_data").upsert({id:"main",dados:S,atualizado_em:new Date().toISOString()});
+    if(error)throw error;
+    sbSetStatus("ok");
+  }catch(e){
+    console.error("Erro ao salvar no Supabase:",e);
+    sbSetStatus("erro");
+  }finally{_sbSyncing=false;}
+}
+
+function save(){
+  cacheLocal(); // cache local imediato
+  setTimeout(renderAvisos,50);
+  clearTimeout(save._sbDebounce);
+  save._sbDebounce=setTimeout(salvarDados,1500);
+}
+function sbSetStatus(st){
+  const el=document.getElementById("sbStatus");if(!el)return;
+  if(st==="ok")el.innerHTML="<span style='color:#22C984'>☁ Sincronizado</span>";
+  else if(st==="erro")el.innerHTML="<span style='color:#FF5263'>☁ Erro ao sincronizar</span>";
+  else if(st==="syncing")el.innerHTML="<span style='color:#F5C842'>☁ Sincronizando…</span>";
 }
 const ANO_ATUAL=new Date().getFullYear();
 function migrate(){
@@ -366,18 +438,18 @@ function migrate(){
       en.valorPorAno={[ANO_ATUAL]:en.valor||0};
     }
   });
+  (S.recibos||[]).forEach(r=>{
+    if(r.enviado===undefined)r.enviado=false;
+  });
 }
-migrate();
-// corrige cargo que ainda contenha " — Kolping Estadual de São Paulo"
-(function fixCargo(){
+function fixCargo(){
   const c=S.config;
   if(c.cargo&&c.cargo.includes(" — ")){
     const parts=c.cargo.split(" — ");
     c.cargo=parts[0].trim();
     if(!c.org&&parts[1])c.org=parts[1].trim();
-    save();
   }
-})();
+}
 function maisRecenteAte(mapKeys,ano){const a=mapKeys.map(Number).filter(x=>x<=ano).sort((x,y)=>y-x);if(a.length)return a[0];const all=mapKeys.map(Number).sort((x,y)=>x-y);return all.length?all[0]:null;}
 function taxaUnit(tipo,ano){const t=S.config.taxasPorAno||{};let y=t[ano];if(!y){const k=maisRecenteAte(Object.keys(t),ano);y=k!=null?t[k]:null;}if(!y)y={soc:S.config.valSocietaria||0,sol:S.config.valSolidariedade||0};return tipo==="societaria"?(+y.soc||0):(+y.sol||0);}
 function assocAno(co,ano){const m=co.associadosPorAno||{};let y=m[ano];if(!y){const k=maisRecenteAte(Object.keys(m),ano);y=k!=null?m[k]:null;}if(!y)y={ef:co.efetivos||0,co:co.cooperadores||0};return (+y.ef||0)+(+y.co||0);}
@@ -396,10 +468,17 @@ function onlyDigits(s){return String(s||"").replace(/\D/g,"");}
 function maskCNPJ(v){const d=onlyDigits(v).slice(0,14);let o="";for(let i=0;i<d.length;i++){if(i===2||i===5)o+=".";if(i===8)o+="/";if(i===12)o+="-";o+=d[i];}return o;}
 let _cnpjTimer=null;
 function lookupCNPJ(d,statusEl,onFound){
-  if(statusEl){statusEl.textContent="Buscando dados do CNPJ…";statusEl.style.color="var(--ink-soft)";}
-  fetch("https://brasilapi.com.br/api/cnpj/v1/"+d).then(r=>{if(!r.ok)throw new Error("nf");return r.json();})
-  .then(j=>{if(statusEl){statusEl.textContent="✓ "+(j.razao_social||j.nome_fantasia||"CNPJ encontrado");statusEl.style.color="var(--ok)";}onFound&&onFound(j);})
-  .catch(err=>{if(statusEl){statusEl.textContent=(err&&err.message==="nf")?"CNPJ não encontrado na base.":"Não foi possível consultar agora (verifique a conexão).";statusEl.style.color="var(--ink-soft)";}});
+  if(statusEl){statusEl.innerHTML=`<span style="color:var(--ink-soft)">🔍 Buscando CNPJ...</span>`;}
+  fetch("https://brasilapi.com.br/api/cnpj/v1/"+d)
+    .then(r=>{if(!r.ok)throw new Error("nf");return r.json();})
+    .then(j=>{
+      const nome=j.nome_fantasia||j.razao_social||"";
+      if(statusEl){statusEl.innerHTML=`<span style="color:var(--ok)">✓ ${esc(nome)}</span>`;}
+      onFound&&onFound(j);
+    })
+    .catch(err=>{
+      if(statusEl){statusEl.innerHTML=`<span style="color:var(--warn)">${err&&err.message==="nf"?"CNPJ não encontrado na Receita Federal":"Erro na consulta — verifique sua conexão"}</span>`;}
+    });
 }
 function cnpjInput(inp,ctx){
   inp.value=maskCNPJ(inp.value);
@@ -413,37 +492,44 @@ function cnpjInput(inp,ctx){
 }
 
 /* valor por extenso (pt-BR, reais e centavos) */
+const _extensoU=["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
+const _extensoDez=["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
+const _extensoCem=["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
+function _extensoAte999(n){
+  if(n===0)return"";
+  if(n===100)return"cem";
+  let p=[];
+  const c=Math.floor(n/100), r=n%100;
+  if(c>0)p.push(_extensoCem[c]);
+  if(r>0){
+    if(r<20)p.push(_extensoU[r]);
+    else{const d=Math.floor(r/10),uu=r%10;p.push(uu>0?_extensoDez[d]+" e "+_extensoU[uu]:_extensoDez[d]);}
+  }
+  return p.join(" e ");
+}
+function _extensoGrupos(n){
+  if(n===0)return"zero";
+  const mi=Math.floor(n/1000000), mil=Math.floor((n%1000000)/1000), c=n%1000;
+  let p=[];
+  if(mi>0)p.push(mi===1?"um milhão":_extensoAte999(mi)+" milhões");
+  if(mil>0)p.push(mil===1?"mil":_extensoAte999(mil)+" mil");
+  if(c>0)p.push(_extensoAte999(c));
+  if(p.length===1)return p[0];
+  const last=p[p.length-1];
+  const usaE = (c>0 && c<100) || (c>0 && c%100===0);
+  return p.slice(0,-1).join(" ") + (usaE?" e ":" ") + last;
+}
+function numeroPorExtenso(n){
+  // escreve um número inteiro por extenso, sem unidade monetária (ex.: "duas", "três")
+  n=Math.round(Number(n)||0);
+  if(n===2)return"duas"; // feminino mais comum no contexto (pessoas, inscrições)
+  if(n===0)return"zero";
+  return _extensoGrupos(n);
+}
 function extenso(valor){
   valor=Math.round((Number(valor)||0)*100);
   const reais=Math.floor(valor/100), cent=valor%100;
-  const u=["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
-  const dez=["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
-  const cem=["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
-  function ate999(n){
-    if(n===0)return"";
-    if(n===100)return"cem";
-    let p=[];
-    const c=Math.floor(n/100), r=n%100;
-    if(c>0)p.push(cem[c]);
-    if(r>0){
-      if(r<20)p.push(u[r]);
-      else{const d=Math.floor(r/10),uu=r%10;p.push(uu>0?dez[d]+" e "+u[uu]:dez[d]);}
-    }
-    return p.join(" e ");
-  }
-  function grupos(n){
-    if(n===0)return"zero";
-    const mi=Math.floor(n/1000000), mil=Math.floor((n%1000000)/1000), c=n%1000;
-    let p=[];
-    if(mi>0)p.push(mi===1?"um milhão":ate999(mi)+" milhões");
-    if(mil>0)p.push(mil===1?"mil":ate999(mil)+" mil");
-    if(c>0)p.push(ate999(c));
-    if(p.length===1)return p[0];
-    // une grupos; "e" antes do último grupo quando for < 100 ou centena exata
-    const last=p[p.length-1];
-    const usaE = (c>0 && c<100) || (c>0 && c%100===0);
-    return p.slice(0,-1).join(" ") + (usaE?" e ":" ") + last;
-  }
+  const grupos=_extensoGrupos;
   let txt="";
   if(reais>0){
     const deReais = reais>=1000000 && reais%1000000===0; // "um milhão de reais"
@@ -565,6 +651,7 @@ function render(){
 let _dashAno=ANO_ATUAL;
 function renderDashboard(){
   const c=$("#content");
+  c.innerHTML=""; // limpar conteúdo anterior
   // seletor de ano
   const anos=[...new Set([ANO_ATUAL,...S.recibos.map(r=>r.data?+r.data.slice(0,4):ANO_ATUAL)])].sort((a,b)=>b-a);
   const selDiv=el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:20px"});
@@ -605,7 +692,24 @@ function renderDashboard(){
   g1.appendChild(el("div",{class:"hd"},el("h2",{},"Arrecadação mensal — "+ano)));
   const g1b=el("div",{class:"bd",style:"padding:16px 20px 8px"});
   const valMeses=MESES_ABV.map((_,mi)=>{
-    return S.recibos.filter(r=>r.data&&+r.data.slice(0,4)===ano&&Number(r.data.slice(5,7))===mi+1).reduce((s,r)=>s+(+r.total||0),0);
+    let total=0;
+    S.recibos.forEach(r=>{
+      if(r.pagadorTipo!=="comunidade"&&r.pagadorTipo!=="entidade")return;
+      (r.itens||[]).forEach(it=>{
+        if(it.tipo==="solidariedade"&&it.ano===ano&&(it.meses||[]).length){
+          if(it.meses.some(m=>m.mes===mi)){
+            const valorPorMes=it.valor/it.meses.length;
+            total+=valorPorMes;
+          }
+        }else if(it.tipo==="societaria"&&it.ano===ano){
+          // societária e aluguel contam no mês em que o recibo foi emitido
+          if(r.data&&Number(r.data.slice(5,7))===mi+1)total+=it.valor;
+        }else if(it.tipo==="aluguel"){
+          if(r.data&&+r.data.slice(0,4)===ano&&Number(r.data.slice(5,7))===mi+1)total+=it.valor;
+        }
+      });
+    });
+    return total;
   });
   const maxVal=Math.max(...valMeses,1);
   // dimensões absolutas: viewBox 600 x 180
@@ -639,6 +743,7 @@ function renderDashboard(){
   });
   g1b.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;overflow:visible">${svgBars}</svg>`;
   g1.appendChild(g1b);
+  wrapGraficoComAcoes(g1,()=>g1b.querySelector("svg"),"arrecadacao_mensal_"+ano,"#fff");
 
   // Gráfico 2: CKs em dia vs atraso (donut)
   const g2=el("div",{class:"card"});
@@ -662,6 +767,7 @@ function renderDashboard(){
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:var(--warn);display:inline-block"></span>${atraso} em atraso</span>
     </div>`;
   g2.appendChild(g2b);
+  wrapGraficoComAcoes(g2,()=>g2b.querySelector("svg"),"situacao_cks_"+ano,"#fff");
 
   grafRow.append(g1,g2);
   c.appendChild(grafRow);
@@ -722,6 +828,7 @@ function renderDashboard(){
   const g3b=el("div",{style:"padding:0;background:#0F1117;border-radius:0 0 16px 16px"});
   g3b.innerHTML=`<svg viewBox="0 0 ${W3} ${H3}" style="width:100%;height:auto;display:block">${s3}</svg>`;
   g3.appendChild(g3b);
+  wrapGraficoComAcoes(g3,()=>g3b.querySelector("svg"),"recebido_pendente_"+ano,"#0F1117");
 
   // Gráfico 4: Evolução de associados — linha estilo trading
   const anosAssoc=[...new Set(S.comunidades.flatMap(co=>Object.keys(co.associadosPorAno||{})).map(Number))].sort((a,b)=>a-b);
@@ -772,6 +879,7 @@ function renderDashboard(){
       <span style="color:#6B7BA4">Total: <b style="color:#00E5A0;font-size:14px">${lastP.tot}</b></span>
     </div>`;
   g4.appendChild(g4b);
+  wrapGraficoComAcoes(g4,()=>g4b.querySelector("svg"),"evolucao_associados","#0F1117");
 
   grafRow2.append(g3,g4);
   c.appendChild(grafRow2);
@@ -807,6 +915,41 @@ function renderDashboard(){
     </div>`;
   prevCard.appendChild(prevBd);
   c.appendChild(prevCard);
+
+  // card de arrecadação do evento (só aparece se houver recibos de evento)
+  const recibosEvento=S.recibos.filter(r=>r.tipoRecibo==="evento");
+  if(recibosEvento.length){
+    const totalEvento=recibosEvento.reduce((s,r)=>s+(+r.total||0),0);
+    const pessoasPF=recibosEvento.filter(r=>r.pessoaTipo==="fisica").reduce((s,r)=>s+(r.itens.find(it=>it.tipo==="evento")?.qtd||1),0);
+    const pessoasPJ=recibosEvento.filter(r=>r.pessoaTipo==="juridica").reduce((s,r)=>s+(r.itens.find(it=>it.tipo==="evento")?.qtd||1),0);
+    const totalPessoas=pessoasPF+pessoasPJ;
+    const nomeEvento=S.config.eventoNome||"Evento";
+    const evCard=el("div",{class:"card",style:"margin-bottom:20px;overflow:hidden"});
+    const evHd=el("div",{class:"hd"});evHd.innerHTML=`<h2>🎟 ${esc(nomeEvento)}</h2><span style="font-size:13px;color:var(--ink-soft)">${recibosEvento.length} recibo(s) emitido(s)</span>`;
+    evCard.appendChild(evHd);
+    const evBd=el("div",{class:"bd"});
+    evBd.innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
+        <div style="text-align:center;padding:4px 16px;border-right:1px solid var(--line)">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">Total arrecadado</div>
+          <div style="font-size:24px;font-weight:800;color:var(--brand)">${brl(totalEvento)}</div>
+        </div>
+        <div style="text-align:center;padding:4px 16px;border-right:1px solid var(--line)">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">Pessoas confirmadas</div>
+          <div style="font-size:24px;font-weight:800;color:var(--ink)">${totalPessoas}</div>
+        </div>
+        <div style="text-align:center;padding:4px 16px;border-right:1px solid var(--line)">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">Pessoa Física</div>
+          <div style="font-size:24px;font-weight:800;color:var(--blue)">${pessoasPF}</div>
+        </div>
+        <div style="text-align:center;padding:4px 16px">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">Pessoa Jurídica</div>
+          <div style="font-size:24px;font-weight:800;color:var(--purple)">${pessoasPJ}</div>
+        </div>
+      </div>`;
+    evCard.appendChild(evBd);
+    c.appendChild(evCard);
+  }
 
   // atalhos rápidos
   const secAtl=el("div",{style:"margin-bottom:20px"});
@@ -852,7 +995,10 @@ function renderDashboard(){
 function emptyHTML(icon,h,p){return `<div class="empty">${svg(icon)}<h3>${h}</h3><p>${p}</p></div>`;}
 function resumoRef(r){return r.itens.map(it=>it.refTexto).join(" · ").slice(0,60)||"—";}
 function pagadorLabel(r){return r.pagadorNome||"—";}
-function numFmt(r){return String(r.numero)+"/"+( r.data?r.data.slice(0,4):String(new Date().getFullYear()));}
+function numFmt(r){
+  if(r.tipoRecibo==="evento")return "EV-"+String(r.numero)+"/"+(r.data?r.data.slice(0,4):String(new Date().getFullYear()));
+  return String(r.numero)+"/"+( r.data?r.data.slice(0,4):String(new Date().getFullYear()));
+}
 function dataPorExtenso(iso){if(!iso)return"";const[y,m,d]=iso.split("-");return parseInt(d,10)+" de "+MESES[parseInt(m,10)-1].toLowerCase()+" de "+y;}
 function listaPt(arr){if(!arr.length)return"";if(arr.length===1)return arr[0];return arr.slice(0,-1).join(", ")+" e "+arr[arr.length-1];}
 function buildReferente(itens){
@@ -865,6 +1011,10 @@ function buildReferente(itens){
       return s;
     }
     if(it.tipo==="societaria")return "taxa societária de "+it.ano;
+    if(it.tipo==="evento"){
+      const qtd=it.qtd||1;
+      return "inscrição de "+(qtd>1?qtd+" ("+numeroPorExtenso(qtd)+") pessoas":"1 (uma) pessoa")+" no "+(it.refTexto||"evento");
+    }
     let s="aluguel";
     const ref=(it.refTexto||"").replace(/^\s*aluguel\s*(ref\.|referente a)?\s*/i,"").trim();
     if(ref)s+=" de "+ref;
@@ -894,9 +1044,22 @@ function buildNotas(itens){
 }
 function pagadorProse(r){
   if(r.pagadorTipo==="comunidade"){
-    let nm=(r.pagadorNome||"").toUpperCase();
-    if(!/^COMUNIDADE\b/.test(nm))nm="COMUNIDADE KOLPING "+nm;
+    let nm=(r.pagadorNome||"").toUpperCase().trim();
+    // remove "COMUNIDADE" e "KOLPING" do início para reconstituir de forma limpa
+    nm=nm.replace(/^COMUNIDADE\s+/,"").replace(/^KOLPING\s+/,"").trim();
+    nm="COMUNIDADE KOLPING "+nm;
     return{conector:"da",nome:nm,portador:"portadora"};
+  }
+  if(r.tipoRecibo==="evento"){
+    if(r.pessoaTipo==="juridica"){
+      let nm=(r.pagadorNome||"").toUpperCase().trim();
+      if(r.pagadorId){ // veio de CK cadastrada
+        nm=nm.replace(/^COMUNIDADE\s+/,"").replace(/^KOLPING\s+/,"").trim();
+        nm="COMUNIDADE KOLPING "+nm;
+      }
+      return{conector:"da",nome:nm,portador:"portadora"};
+    }
+    return{conector:"de",nome:(r.pagadorNome||"").toUpperCase(),portador:"portador(a)"};
   }
   return{conector:"de",nome:(r.pagadorNome||"").toUpperCase(),portador:"portador(a)"};
 }
@@ -987,7 +1150,8 @@ function renderCKDetail(){
   selW.innerHTML=`<label style="font-size:13px;font-weight:500;color:var(--ink-soft)">Ano:</label><select id="ckAnoSel" style="padding:7px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">${anos.map(a=>`<option value="${a}"${a===_ckAno?" selected":""}>${a}</option>`).join("")}</select>`;
   const btnCarta=el("button",{class:"btn ghost",onclick:()=>gerarCartaCobranca(_ckDetailId)});btnCarta.innerHTML=svg("file")+"<span>Carta de cobrança</span>";
   const btnLog=el("button",{class:"btn ghost",onclick:()=>verHistoricoAlteracoes(_ckDetailId)});btnLog.innerHTML="<span>📋 Histórico de alterações</span>";
-  top.append(back,selW,btnLog,btnCarta);c.appendChild(top);
+  const btnExtrato=el("button",{class:"btn ghost",onclick:()=>gerarExtratoCK(_ckDetailId)});btnExtrato.innerHTML="<span>📄 Extrato em PDF</span>";
+  top.append(back,selW,btnLog,btnExtrato,btnCarta);c.appendChild(top);
   function drawCK(ano){
     const existing=document.getElementById("ckBody");if(existing)existing.remove();
     const wrap=el("div",{id:"ckBody"});
@@ -1034,21 +1198,63 @@ function renderCKDetail(){
   }
   selW.querySelector("select").addEventListener("change",e=>{_ckAno=+e.target.value;drawCK(_ckAno);});
   drawCK(_ckAno);
+
+  // seção de recibos emitidos com status de envio
+  const coRecs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===co.id)
+    .sort((a,b)=>(b.emitidoEm||b.data||"").localeCompare(a.emitidoEm||a.data||""));
+  if(coRecs.length){
+    const naoEnv=coRecs.filter(r=>!r.enviado).length;
+    const recsCard=el("div",{class:"card",style:"margin-top:20px"});
+    const recsHd=el("div",{class:"hd"});
+    recsHd.innerHTML=`<h2>Recibos emitidos</h2>${naoEnv>0?`<span style="background:rgba(255,82,99,.12);color:#FF5263;border:1px solid rgba(255,82,99,.3);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700;animation:blink 1.6s ease-in-out infinite">${naoEnv} não enviado${naoEnv>1?"s":""}</span>`:`<span style="background:rgba(34,201,132,.12);color:#22C984;border:1px solid rgba(34,201,132,.25);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700">Todos enviados</span>`}`;
+    recsCard.appendChild(recsHd);
+    const recsBd=el("div",{class:"bd",style:"padding:0"});
+    const tb=el("table");
+    tb.innerHTML="<thead><tr><th>Nº</th><th>Data</th><th>Referência</th><th class='num'>Valor</th><th>Envio</th><th></th></tr></thead>";
+    const body=el("tbody");
+    coRecs.forEach(r=>{
+      const tr=el("tr");
+      tr.innerHTML=`<td><span class="pill">${numFmt(r)}</span></td><td>${fmtDateBR(r.data)}</td><td style="color:var(--ink-soft);font-size:13px">${esc(resumoRef(r))}</td><td class="num">${brl(r.total)}</td>`;
+      const tdEnvio=el("td");
+      tdEnvio.appendChild(mkBadgeEnvio(r,()=>go("ck_detail",co)));
+      tr.appendChild(tdEnvio);
+      const td=el("td",{style:"text-align:right;white-space:nowrap"});
+      td.append(
+        el("button",{class:"btn ghost sm",onclick:()=>verRecibo(r.id)},"Ver"),
+        el("button",{class:"btn ghost sm",onclick:()=>editarRecibo(r.id)},"Editar"),
+        el("button",{class:"btn ghost sm",onclick:()=>gerarPDF(r)},"PDF")
+      );
+      tr.appendChild(td);body.appendChild(tr);
+    });
+    tb.appendChild(body);recsBd.appendChild(tb);
+    recsCard.appendChild(recsBd);c.appendChild(recsCard);
+  }
 }
 // situação de um mês: pago|parcial|isento|atraso|futuro
 function getMesSit(coId,ano,mes,tipo){
   // override manual
   const ov=getOverride(coId,ano,mes,tipo);
   if(ov)return ov;
-  // verificar recibos
+  // verificar recibos — somar TODOS os recibos que cobrem este mês
   const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===coId);
   if(tipo==="solidariedade"){
-    for(const r of recs){for(const it of r.itens){if(it.tipo==="solidariedade"&&it.ano===ano&&(it.meses||[]).some(m=>m.mes===mes))return{status:"pago",valor:it.valor,rec:r.id};}}
+    let totalPago=0;const recsIds=[];
+    recs.forEach(r=>r.itens.forEach(it=>{
+      if(it.tipo==="solidariedade"&&it.ano===ano&&(it.meses||[]).some(m=>m.mes===mes)){
+        totalPago+=it.valor/(it.meses.length||1);
+        recsIds.push(r.id);
+      }
+    }));
+    if(totalPago>0)return{status:"pago",valor:totalPago,rec:recsIds[0],recs:recsIds};
     const hoje=new Date(),venc=new Date(ano,mes,S.config.diaVenc||15);
     if(hoje<venc)return{status:"futuro"};
     return{status:"atraso"};
   }else{
-    for(const r of recs){for(const it of r.itens){if(it.tipo==="societaria"&&it.ano===ano)return{status:"pago",valor:it.valor,rec:r.id};}}
+    let totalPago=0;const recsIds=[];
+    recs.forEach(r=>r.itens.forEach(it=>{
+      if(it.tipo==="societaria"&&it.ano===ano){totalPago+=it.valor;recsIds.push(r.id);}
+    }));
+    if(totalPago>0)return{status:"pago",valor:totalPago,rec:recsIds[0],recs:recsIds};
     if(new Date().getFullYear()<ano)return{status:"futuro"};
     return{status:"atraso"};
   }
@@ -1072,19 +1278,27 @@ function buildMesCard(label,mes,ano,tipo,sit,co,valBase){
   const labels={pago:"Pago",atraso:"Em atraso",isento:"Isento",futuro:"Futuro",parcial:"Parcial"};
   const s=sit.status||"atraso";
   const card=el("div",{style:`border:1px solid var(--line);border-radius:10px;padding:14px;background:${bgs[s]||"#fff"};position:relative`});
+  // múltiplos recibos no mesmo mês
+  const multiRecs=sit.recs&&sit.recs.length>1;
   card.innerHTML=`
     <div style="font-weight:600;font-size:14px;margin-bottom:6px">${label}</div>
-    <div style="font-size:13px;color:${cores[s]};font-weight:600;margin-bottom:6px">${labels[s]||s}</div>
-    ${sit.valor?`<div style="font-size:12px;color:var(--ink-soft)">Pago: ${brl(sit.valor)}</div>`:`<div style="font-size:12px;color:var(--ink-soft)">${brl(valBase)}</div>`}
+    <div style="font-size:13px;color:${cores[s]};font-weight:600;margin-bottom:6px">${labels[s]||s}${multiRecs?` <span style="font-size:10px;font-weight:700;background:rgba(240,120,48,.15);color:var(--brand);border-radius:5px;padding:1px 5px">${sit.recs.length} recibos</span>`:""}</div>
+    ${sit.valor?`<div style="font-size:12px;color:var(--ink-soft)">Pago: <b>${brl(sit.valor)}</b>${multiRecs?` (soma de ${sit.recs.length} recibos)`:""}</div>`:`<div style="font-size:12px;color:var(--ink-soft)">${brl(valBase)}</div>`}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">`;
   const acts=card.querySelector("div:last-child");
-  // Botão Recibo
   if(s==="pago"&&sit.rec){
-    const b=el("button",{class:"btn sm ghost",onclick:()=>verRecibo(sit.rec)});b.textContent="Ver recibo";acts.appendChild(b);
-  } else if(s!=="isento"&&s!=="futuro"){
+    if(multiRecs){
+      // mostrar botão para cada recibo
+      sit.recs.forEach((rid,i)=>{
+        const b=el("button",{class:"btn sm ghost",onclick:()=>verRecibo(rid)});
+        b.textContent=`Ver recibo ${i+1}`;acts.appendChild(b);
+      });
+    }else{
+      const b=el("button",{class:"btn sm ghost",onclick:()=>verRecibo(sit.rec)});b.textContent="Ver recibo";acts.appendChild(b);
+    }
+  }else if(s!=="isento"&&s!=="futuro"){
     const b=el("button",{class:"btn sm primary",onclick:()=>emitirRapido(co,tipo,ano,mes,valBase)});b.textContent="Emitir";acts.appendChild(b);
   }
-  // Botão alterar situação
   const bEdit=el("button",{class:"btn sm ghost",onclick:()=>editarSituacaoMes(co,ano,mes,tipo,sit,valBase)});bEdit.textContent="Alterar";acts.appendChild(bEdit);
   return card;
 }
@@ -1139,7 +1353,7 @@ function emitirRapido(co,tipo,ano,mes,valBase){
     if(tipo==="solidariedade"){it.meses=[{mes,ano}];it.ajuste="integral";const nomes=MESES_ABV[mes]+"/"+ano;it.refTexto="Solidariedade ref. "+nomes;}
     else{it.refTexto="Societária "+ano;}
     const tot=val;
-    const r={id:uid(),numero:S.seq,data,pagadorTipo:"comunidade",pagadorId:co.id,pagadorNome:co.nome,pagadorDoc:co.cnpj||"",formaPag:forma,obs,itens:[it],total:tot,emitidoEm:todayISO()};
+    const r={id:uid(),numero:S.seq,data,pagadorTipo:"comunidade",pagadorId:co.id,pagadorNome:co.nome,pagadorDoc:co.cnpj||"",formaPag:forma,obs,itens:[it],total:tot,emitidoEm:todayISO(),enviado:false};
     aplicarCreditoAoRecibo(r,co.id);
     S.recibos.push(r);S.seq++;save();
     const co2=comunidade(co.id);
@@ -1223,7 +1437,8 @@ function delEntidade(id){confirmBox("Excluir esta entidade locatária?",()=>{S.e
 
 /* ---- Emitir recibo ---- */
 let draft=null, prefillCom=null, prefillMes=null, _assocDraft=[], _rentDraft=[];
-function newDraft(){return{data:todayISO(),pagadorTipo:"comunidade",pagadorId:prefillCom||"",formaPag:"PIX",obs:"",itens:[]};}
+function newDraft(){return{data:todayISO(),pagadorTipo:"comunidade",pagadorId:prefillCom||"",formaPag:"PIX",obs:"",itens:[],
+  eventoPF:{nome:"",cpf:""},eventoPJTipo:"ck",eventoPJNome:"",eventoPJDoc:""};}
 function renderEmitir(){
   const c=$("#content");
   if(!S.comunidades.length&&!S.entidades.length){
@@ -1264,6 +1479,7 @@ function renderEmitir(){
     <select id="d_tipo">
       <option value="comunidade"${draft.pagadorTipo==="comunidade"?" selected":""}>Comunidade Kolping</option>
       <option value="entidade"${draft.pagadorTipo==="entidade"?" selected":""}>Entidade locatária (aluguel)</option>
+      <option value="evento"${draft.pagadorTipo==="evento"?" selected":""}>Inscrição em Evento</option>
     </select>`;
   bd.appendChild(tipoRow);
 
@@ -1320,11 +1536,112 @@ function syncPagador(){
     w.innerHTML=`<label>Comunidade</label><div style="position:relative"><input class="input" id="d_pag_search" placeholder="Buscar comunidade…" autocomplete="off" value="${selCo?esc(selCo.nome):""}"></div>`;
     const inp=w.querySelector("#d_pag_search");
     ckSearchInput(inp,(id)=>{draft.pagadorId=id;updatePreview();renderAddBtns();renderCreditoAviso();});
-  }else{
+  }else if(draft.pagadorTipo==="entidade"){
     w.innerHTML=`<label>Entidade locatária</label><select id="d_pag"><option value="">Selecione…</option>${S.entidades.map(e=>`<option value="${e.id}"${draft.pagadorId===e.id?" selected":""}>${esc(e.nome)}</option>`).join("")}</select>`;
     $("#d_pag").addEventListener("change",e=>{draft.pagadorId=e.target.value;updatePreview();renderAddBtns();renderCreditoAviso();});
+  }else if(draft.pagadorTipo==="evento"){
+    w.innerHTML=`
+      <div class="field">
+        <label>Tipo de inscrito</label>
+        <div style="display:flex;gap:20px;padding:12px 14px;background:var(--surface-2);border-radius:9px;border:1px solid var(--line)">
+          <label style="display:flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0;margin:0"><input type="radio" name="evPessoa" value="pf" id="ev_pf_radio"${(!draft.eventoPJTipo||draft.eventoPJTipo==="pf")&&!draft._evJuridica?" checked":""}> Pessoa Física</label>
+          <label style="display:flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0;margin:0"><input type="radio" name="evPessoa" value="pj" id="ev_pj_radio"${draft._evJuridica?" checked":""}> Pessoa Jurídica</label>
+        </div>
+      </div>
+      <div id="ev_pf_fields" style="${draft._evJuridica?"display:none":""}">
+        <div class="row c2">
+          <div class="field"><label>Nome completo</label><input class="input" id="ev_pf_nome" value="${esc(draft.eventoPF.nome||"")}" placeholder="Nome do participante"></div>
+          <div class="field"><label>CPF (opcional)</label><input class="input" id="ev_pf_cpf" value="${esc(draft.eventoPF.cpf||"")}" placeholder="000.000.000-00"></div>
+        </div>
+      </div>
+      <div id="ev_pj_fields" style="${draft._evJuridica?"":"display:none"}">
+        <div class="field">
+          <label>Origem da pessoa jurídica</label>
+          <div style="display:flex;gap:20px;padding:12px 14px;background:var(--surface-2);border-radius:9px;border:1px solid var(--line)">
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0;margin:0"><input type="radio" name="evPJTipo" value="ck" id="ev_pj_ck_radio"${draft.eventoPJTipo!=="avulso"?" checked":""}> Comunidade cadastrada</label>
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0;margin:0"><input type="radio" name="evPJTipo" value="avulso" id="ev_pj_avulso_radio"${draft.eventoPJTipo==="avulso"?" checked":""}> CNPJ avulso</label>
+          </div>
+        </div>
+        <div id="ev_pj_ck_wrap" style="${draft.eventoPJTipo==="avulso"?"display:none":""}">
+          <div class="field"><label>Comunidade</label><input class="input" id="ev_pj_ck_search" placeholder="Buscar comunidade…" autocomplete="off" value="${draft.pagadorId&&draft.eventoPJTipo!=="avulso"?esc(comunidade(draft.pagadorId)?.nome||""):""}"></div>
+        </div>
+        <div id="ev_pj_avulso_wrap" style="${draft.eventoPJTipo==="avulso"?"":"display:none"}">
+          <div class="row c2">
+            <div class="field">
+              <label>CNPJ</label><input class="input" id="ev_pj_doc" value="${esc(draft.eventoPJDoc||"")}" placeholder="00.000.000/0000-00" maxlength="18">
+              <div class="hint" id="ev_pj_status" style="margin-top:5px;min-height:16px"></div>
+            </div>
+            <div class="field"><label>Razão social</label><input class="input" id="ev_pj_nome" value="${esc(draft.eventoPJNome||"")}" placeholder="Preenchido automaticamente"></div>
+          </div>
+        </div>
+      </div>
+      <div class="row c2" style="border-top:1px solid var(--line);padding-top:18px">
+        <div class="field" style="margin-bottom:0"><label>Quantidade de inscrições</label><input class="input" type="number" min="1" id="ev_qtd_inicial" value="${draft._evQtdInicial||1}"></div>
+        <div class="field" style="margin-bottom:0"><label>Valor por pessoa</label><input class="input" type="number" step="0.01" id="ev_valor_inicial" value="${(draft._evValorInicial||S.config.eventoValor||265).toFixed(2)}"></div>
+      </div>`;
+    // listeners PF/PJ
+    w.querySelector("#ev_pf_radio").addEventListener("change",()=>{draft._evJuridica=false;syncPagador();});
+    w.querySelector("#ev_pj_radio").addEventListener("change",()=>{draft._evJuridica=true;syncPagador();});
+    if(!draft._evJuridica){
+      w.querySelector("#ev_pf_nome").addEventListener("input",e=>{draft.eventoPF.nome=e.target.value;atualizarPagadorEvento();renderAddBtns();updatePreview();});
+      w.querySelector("#ev_pf_cpf").addEventListener("input",e=>{draft.eventoPF.cpf=e.target.value;atualizarPagadorEvento();updatePreview();});
+    }else{
+      w.querySelector("#ev_pj_ck_radio").addEventListener("change",()=>{draft.eventoPJTipo="ck";syncPagador();});
+      w.querySelector("#ev_pj_avulso_radio").addEventListener("change",()=>{draft.eventoPJTipo="avulso";syncPagador();});
+      if(draft.eventoPJTipo!=="avulso"){
+        const ckInp=w.querySelector("#ev_pj_ck_search");
+        ckSearchInput(ckInp,(id)=>{draft.pagadorId=id;atualizarPagadorEvento();renderAddBtns();updatePreview();});
+      }else{
+        const docInp=w.querySelector("#ev_pj_doc");
+        const statusEl=w.querySelector("#ev_pj_status");
+        docInp.addEventListener("input",e=>{
+          e.target.value=maskCNPJ(e.target.value);
+          draft.eventoPJDoc=e.target.value;
+          atualizarPagadorEvento();updatePreview();
+          const d=onlyDigits(e.target.value);
+          if(d.length===14){
+            lookupCNPJ(d,statusEl,(j)=>{
+              const nomeEncontrado=j.nome_fantasia||j.razao_social||"";
+              if(nomeEncontrado){
+                draft.eventoPJNome=nomeEncontrado;
+                const nomeInp=w.querySelector("#ev_pj_nome");
+                if(nomeInp)nomeInp.value=nomeEncontrado;
+                atualizarPagadorEvento();renderAddBtns();updatePreview();
+              }
+            });
+          }else if(statusEl){statusEl.innerHTML="";}
+        });
+        w.querySelector("#ev_pj_nome").addEventListener("input",e=>{draft.eventoPJNome=e.target.value;atualizarPagadorEvento();renderAddBtns();updatePreview();});
+      }
+    }
+    atualizarPagadorEvento();
+    const qtdInp=w.querySelector("#ev_qtd_inicial"),valInp=w.querySelector("#ev_valor_inicial");
+    if(qtdInp)qtdInp.addEventListener("input",e=>{
+      draft._evQtdInicial=Math.max(1,+e.target.value||1);
+      const it=draft.itens.find(i=>i.tipo==="evento");
+      if(it){it.qtd=draft._evQtdInicial;it.manual=false;recalcItem(it);renderItens();}
+      updatePreview();
+    });
+    if(valInp)valInp.addEventListener("input",e=>{
+      draft._evValorInicial=+e.target.value||(S.config.eventoValor||265);
+      const it=draft.itens.find(i=>i.tipo==="evento");
+      if(it){it.valorUnit=draft._evValorInicial;it.manual=false;recalcItem(it);renderItens();}
+      updatePreview();
+    });
   }
   renderAddBtns();renderCreditoAviso();
+}
+function atualizarPagadorEvento(){
+  // sincroniza draft.pagadorId/Nome para fins de exibição e validação
+  if(draft._evJuridica){
+    if(draft.eventoPJTipo==="avulso"){
+      draft._evPagadorOk=!!(draft.eventoPJNome&&draft.eventoPJNome.trim());
+    }else{
+      draft._evPagadorOk=!!draft.pagadorId;
+    }
+  }else{
+    draft._evPagadorOk=!!(draft.eventoPF.nome&&draft.eventoPF.nome.trim());
+  }
 }
 function renderCreditoAviso(){
   const w=$("#d_credaviso");if(!w)return;
@@ -1335,9 +1652,18 @@ function renderCreditoAviso(){
 }
 function renderAddBtns(){
   const w=$("#d_additens");if(!w)return;w.innerHTML="";
+  if(draft.pagadorTipo==="evento"){
+    if(!draft._evPagadorOk)return;
+    w.append(el("button",{class:"btn sm",onclick:()=>addItem("evento")},"+ Inscrição no evento"));
+    return;
+  }
   if(!draft.pagadorId)return;
   if(draft.pagadorTipo==="comunidade"){
-    w.append(el("button",{class:"btn sm",onclick:()=>addItem("solidariedade")},"+ Solidariedade"),el("button",{class:"btn sm",style:"margin-left:8px",onclick:()=>addItem("societaria")},"+ Societária"));
+    const temSol=draft.itens.some(it=>it.tipo==="solidariedade");
+    const temSoc=draft.itens.some(it=>it.tipo==="societaria");
+    if(!temSol)w.append(el("button",{class:"btn sm",onclick:()=>addItem("solidariedade")},"+ Solidariedade"));
+    if(!temSoc)w.append(el("button",{class:"btn sm",style:"margin-left:8px",onclick:()=>addItem("societaria")},"+ Societária"));
+    // permitir adicionar os dois se nenhum ainda foi adicionado ou se falta um deles
   }else{
     w.append(el("button",{class:"btn sm",onclick:()=>addItem("aluguel")},"+ Aluguel"));
   }
@@ -1346,6 +1672,11 @@ function addItem(tipo){
   const ano=ANO_ATUAL;
   if(tipo==="solidariedade")draft.itens.push({id:uid(),tipo,ano,meses:[],valor:0,esperado:0,ajuste:"integral",refTexto:"",manual:false});
   else if(tipo==="societaria")draft.itens.push({id:uid(),tipo,ano,valor:0,refTexto:"",manual:false});
+  else if(tipo==="evento"){
+    const valorUnit=draft._evValorInicial||S.config.eventoValor||265;
+    const qtd=draft._evQtdInicial||1;
+    draft.itens.push({id:uid(),tipo,ano,qtd,valorUnit,valor:valorUnit*qtd,refTexto:S.config.eventoNome||"Inscrição em evento",manual:false});
+  }
   else{const en=entidade(draft.pagadorId);const base=en?aluguelAno(en,ano):0;draft.itens.push({id:uid(),tipo,ano,base,jurosPct:0,mesesAtraso:0,valor:base,refTexto:"Aluguel ref. "+MESES_ABV[new Date().getMonth()]+"/"+ano,manual:false});}
   recalcItem(draft.itens[draft.itens.length-1]);
   renderItens();updatePreview();
@@ -1367,6 +1698,8 @@ function recalcItem(it){
     const juros=(it.base||0)*((it.jurosPct||0)/100)*(it.mesesAtraso||0);
     it.juros=juros;
     if(!it.manual)it.valor=(it.base||0)+juros;
+  }else if(it.tipo==="evento"){
+    if(!it.manual)it.valor=(it.valorUnit||0)*(it.qtd||1);
   }
 }
 function renderItens(){
@@ -1376,7 +1709,7 @@ function renderItens(){
   const ano=new Date().getFullYear();const anos=[ano-2,ano-1,ano,ano+1];
   draft.itens.forEach((it,idx)=>{
     const box=el("div",{class:"lineitem"});
-    const titulo={solidariedade:"Solidariedade (mensal)",societaria:"Societária (anual)",aluguel:"Aluguel"}[it.tipo];
+    const titulo={solidariedade:"Solidariedade (mensal)",societaria:"Societária (anual)",aluguel:"Aluguel",evento:"Inscrição em evento"}[it.tipo];
     const hd=el("div",{class:"li-hd"});
     hd.innerHTML=`<b>${titulo}</b>`;
     hd.appendChild(el("button",{class:"close-x",onclick:()=>{draft.itens.splice(idx,1);renderItens();updatePreview();}},"×"));
@@ -1446,6 +1779,21 @@ function renderItens(){
       box.appendChild(ref);
     }
 
+    if(it.tipo==="evento"){
+      const r=el("div",{class:"row c3"});
+      r.innerHTML=`
+        <div class="field" style="grid-column:span 1"><label>Valor por pessoa</label><input class="input" type="number" step="0.01" id="ev_vu_${it.id}" value="${(it.valorUnit||0).toFixed(2)}"></div>
+        <div class="field"><label>Quantidade de pessoas</label><input class="input" type="number" min="1" id="ev_qt_${it.id}" value="${it.qtd||1}"></div>
+        <div class="field"><label>Total calculado</label><input class="input" value="${brl((it.valorUnit||0)*(it.qtd||1))}" disabled style="opacity:.7"></div>`;
+      const vuInp=r.querySelector("#ev_vu_"+it.id), qtInp=r.querySelector("#ev_qt_"+it.id);
+      vuInp.addEventListener("input",e=>{it.valorUnit=+e.target.value||0;it.manual=false;recalcItem(it);renderItens();updatePreview();});
+      qtInp.addEventListener("input",e=>{it.qtd=Math.max(1,+e.target.value||1);it.manual=false;recalcItem(it);renderItens();updatePreview();});
+      box.appendChild(r);
+      const refE=el("div",{class:"field"});refE.innerHTML=`<label>Nome do evento</label><input class="input" id="ev_ref_${it.id}" value="${esc(it.refTexto)}">`;
+      refE.querySelector("input").addEventListener("input",e=>{it.refTexto=e.target.value;updatePreview();});
+      box.appendChild(refE);
+    }
+
     // valor editável
     const isParcial=it.tipo==="solidariedade"&&it.ajuste==="parcial";
     const vrow=el("div",{style:"display:flex;align-items:flex-end;gap:12px;justify-content:space-between;border-top:1px dashed var(--line);padding-top:12px;margin-top:4px"});
@@ -1475,28 +1823,44 @@ function buildReciboObj(numero){
   const tot=draft.itens.reduce((s,it)=>s+(+it.valor||0),0);
   let nome="",doc="";
   if(draft.pagadorTipo==="comunidade"){const co=comunidade(draft.pagadorId);nome=co?co.nome:"";doc=co?co.cnpj:"";}
-  else{const en=entidade(draft.pagadorId);nome=en?en.nome:"";doc=en?en.cnpj:"";}
+  else if(draft.pagadorTipo==="entidade"){const en=entidade(draft.pagadorId);nome=en?en.nome:"";doc=en?en.cnpj:"";}
+  else if(draft.pagadorTipo==="evento"){
+    if(draft._evJuridica){
+      if(draft.eventoPJTipo==="avulso"){nome=draft.eventoPJNome||"";doc=draft.eventoPJDoc||"";}
+      else{const co=comunidade(draft.pagadorId);nome=co?co.nome:"";doc=co?co.cnpj:"";}
+    }else{nome=draft.eventoPF.nome||"";doc=draft.eventoPF.cpf||"";}
+  }
   return{
-    id:uid(),numero,data:draft.data,pagadorTipo:draft.pagadorTipo,pagadorId:draft.pagadorId,
+    id:uid(),numero,data:draft.data,pagadorTipo:draft.pagadorTipo,pagadorId:draft.pagadorTipo==="evento"&&!draft._evJuridica?null:draft.pagadorId,
     pagadorNome:nome,pagadorDoc:doc,formaPag:draft.formaPag,obs:draft.obs,
-    itens:draft.itens.map(it=>({...it})),total:tot,emitidoEm:todayISO()
+    tipoRecibo:draft.pagadorTipo==="evento"?"evento":"padrao",
+    pessoaTipo:draft.pagadorTipo==="evento"?(draft._evJuridica?"juridica":"fisica"):undefined,
+    itens:draft.itens.map(it=>({...it})),total:tot,emitidoEm:todayISO(),enviado:false
   };
 }
 function updatePreview(){
   const pv=$("#d_preview");if(!pv)return;
-  if(!draft.pagadorId||!draft.itens.length){pv.innerHTML=`<div style="color:var(--ink-soft);font-size:13.5px;text-align:center;padding:30px 10px">Selecione o pagador e adicione itens para ver o recibo.</div>`;return;}
-  const obj=buildReciboObj(S.seq);
+  const isEvento=draft.pagadorTipo==="evento";
+  if((isEvento&&!draft._evPagadorOk)||(!isEvento&&!draft.pagadorId)||!draft.itens.length){pv.innerHTML=`<div style="color:var(--ink-soft);font-size:13.5px;text-align:center;padding:30px 10px">Selecione o pagador e adicione itens para ver o recibo.</div>`;return;}
+  const numero=isEvento?(S.config.eventoSeq||1):S.seq;
+  const obj=buildReciboObj(numero);
   pv.innerHTML=reciboHTML(obj,true);
 }
 function emitirRecibo(){
-  if(!draft.pagadorId){toast("Selecione o pagador.");return;}
+  const isEvento=draft.pagadorTipo==="evento";
+  if(isEvento){
+    if(!draft._evPagadorOk){toast("Preencha os dados do inscrito.");return;}
+  }else if(!draft.pagadorId){toast("Selecione o pagador.");return;}
   if(!draft.itens.length){toast("Adicione ao menos um item.");return;}
   const tot=draft.itens.reduce((s,it)=>s+(+it.valor||0),0);
   if(tot<=0){toast("O total precisa ser maior que zero.");return;}
   for(const it of draft.itens){if(it.tipo==="solidariedade"&&!it.meses.length){toast("Selecione os meses da Solidariedade.");return;}}
-  const obj=buildReciboObj(S.seq);
+  const numero=isEvento?(S.config.eventoSeq||1):S.seq;
+  const obj=buildReciboObj(numero);
   if(draft.pagadorTipo==="comunidade")aplicarCreditoAoRecibo(obj,draft.pagadorId);
-  S.recibos.push(obj);S.seq++;save();
+  S.recibos.push(obj);
+  if(isEvento)S.config.eventoSeq=(S.config.eventoSeq||1)+1;else S.seq++;
+  save();
   draft=null;
   // guarda o id da CK para poder voltar
   const _origemCK=obj.pagadorTipo==="comunidade"?obj.pagadorId:null;
@@ -1526,7 +1890,9 @@ function reciboHTML(r,preview){
   const obsHTML=r.obs?`<div class="r-obs"><b>Observação:</b> ${esc(r.obs)}</div>`:"";
   const sign=cfg.assinatura?`<img src="${cfg.assinatura}" alt="assinatura">`:"";
   const pp=pagadorProse(r);
-  const docPart=r.pagadorDoc?` ${pp.portador} do CNPJ. ${esc(r.pagadorDoc)}`:"";
+  const ehPF=r.tipoRecibo==="evento"&&r.pessoaTipo==="fisica";
+  const docLabel=ehPF?"CPF":"CNPJ";
+  const docPart=r.pagadorDoc?` ${pp.portador} do ${docLabel}. ${esc(r.pagadorDoc)}`:"";
   const corpo=`Eu ${esc(cfg.razao)} sob. CNPJ. ${esc(cfg.cnpj)}, recebi o valor de <b>${brl(r.total)}</b> (${esc(extenso(r.total).toLowerCase())}) ${pp.conector} <b>${esc(pp.nome)}</b>${docPart}, ${esc(buildReferente(r.itens))}.`;
   const tabela=r.itens.length>1?`<table class="r-items"><thead><tr><th>Referência</th><th style="text-align:right">Valor</th></tr></thead><tbody>${itensRows}</tbody><tfoot><tr><td>Total</td><td style="text-align:right">${brl(r.total)}</td></tr></tfoot></table>`:"";
   const notas=buildNotas(r.itens);
@@ -1561,6 +1927,7 @@ function verRecibo(id){
     {label:"⬇ PDF",cls:"primary",fn:()=>gerarPDF(r)},
     {label:"📲 PDF + WhatsApp",cls:"primary",fn:()=>pdfEwhatsapp(r)},
     {label:"✉ E-mail",cls:"ghost",fn:()=>enviarEmail(r)},
+    {label:"🖨 Imprimir colorido",cls:"ghost",fn:()=>imprimirColorido(r)},
     {label:"🖨 Imprimir P&B",cls:"ghost",fn:()=>imprimirPB(r)},
     {label:"Excluir",cls:"ghost danger",fn:()=>{closeModal();delRecibo(r.id);}}
   ],"wide");
@@ -1575,26 +1942,127 @@ function verRecibo(id){
     }
   },100);
 }
+/* ============ DUPLICAR RECIBO ============ */
+function duplicarRecibo(id){
+  const r=S.recibos.find(x=>x.id===id);if(!r)return;
+  // monta um novo draft a partir do recibo original, preservando estrutura mas com data de hoje
+  const novoDraft={
+    data:todayISO(),
+    pagadorTipo:r.pagadorTipo,
+    pagadorId:r.pagadorId||"",
+    formaPag:r.formaPag||"PIX",
+    obs:"",
+    itens:r.itens.map(it=>{
+      const novo={...it,id:uid()};
+      // zera os meses selecionados da solidariedade — usuário escolhe de novo (evita repetir meses já pagos)
+      if(novo.tipo==="solidariedade")novo.meses=[];
+      return novo;
+    }),
+    eventoPF:{nome:"",cpf:""},
+    eventoPJTipo:"ck",
+    eventoPJNome:"",
+    eventoPJDoc:""
+  };
+  if(r.tipoRecibo==="evento"){
+    novoDraft._evJuridica=r.pessoaTipo==="juridica";
+    if(r.pessoaTipo==="juridica"){
+      if(r.pagadorId){novoDraft.eventoPJTipo="ck";novoDraft.pagadorId=r.pagadorId;}
+      else{novoDraft.eventoPJTipo="avulso";novoDraft.eventoPJNome=r.pagadorNome||"";novoDraft.eventoPJDoc=r.pagadorDoc||"";}
+    }else{
+      novoDraft.eventoPF={nome:r.pagadorNome||"",cpf:r.pagadorDoc||""};
+    }
+    const itEv=novoDraft.itens.find(it=>it.tipo==="evento");
+    if(itEv){novoDraft._evQtdInicial=itEv.qtd||1;novoDraft._evValorInicial=itEv.valorUnit||S.config.eventoValor||265;}
+  }
+  draft=novoDraft;
+  // recalcula itens não-solidariedade (aluguel pode ter juros diferentes na nova data; societária/evento mantém valor)
+  draft.itens.forEach(it=>{if(it.tipo==="aluguel"){it.manual=false;recalcItem(it);}});
+  go("emitir");
+  setTimeout(()=>toast("Recibo duplicado! Revise os dados antes de emitir."),300);
+}
 function imprimir(r){gerarPDF(r);}
 function delRecibo(id){const r=S.recibos.find(x=>x.id===id);confirmBox("Excluir o recibo "+numFmt(r)+"? Esta ação não pode ser desfeita.",()=>{S.recibos=S.recibos.filter(x=>x.id!==id);save();render();toast("Recibo excluído.");});}
 function editarRecibo(id){
   const r=S.recibos.find(x=>x.id===id);if(!r)return;
-  openModal("Editar recibo "+numFmt(r),`
-    <div class="row c2">
-      <div class="field"><label>Data do pagamento</label><input class="input" type="date" id="er_data" value="${r.data}"></div>
-      <div class="field"><label>Forma de pagamento</label><select id="er_forma">${FP.map(f=>`<option${r.formaPag===f?" selected":""}>${f}</option>`).join("")}</select></div>
-    </div>
-    <div class="field"><label>Observação</label><textarea id="er_obs">${esc(r.obs||"")}</textarea></div>
-  `,()=>{
+  const anos=[ANO_ATUAL,ANO_ATUAL-1,ANO_ATUAL-2,ANO_ATUAL+1].sort((a,b)=>b-a);
+  let itensHTML="";
+  r.itens.forEach((it,i)=>{
+    const isSol=it.tipo==="solidariedade";
+    const isSoc=it.tipo==="societaria";
+    const isAlug=it.tipo==="aluguel";
+    const isEv=it.tipo==="evento";
+    const tipoLabel=isSol?"Solidariedade":isSoc?"Societária":isAlug?"Aluguel":isEv?"Evento":"Item";
+    const tipoOpts=
+      '<option value="solidariedade"'+(isSol?' selected':'')+'>Solidariedade</option>'+
+      '<option value="societaria"'+(isSoc?' selected':'')+'>Societária</option>'+
+      (isAlug?'<option value="aluguel" selected>Aluguel</option>':'')+
+      (isEv?'<option value="evento" selected>Evento</option>':'');
+    const anoOpts=anos.map(a=>'<option value="'+a+'"'+(+it.ano===a?' selected':'')+'>'+a+'</option>').join('');
+    let mesesHTML='';
+    if(isSol){
+      const checkboxes=MESES_ABV.map((m,mi)=>{
+        const checked=(it.meses||[]).some(x=>x.mes===mi)?'checked':'';
+        return '<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;text-transform:none;color:var(--ink);letter-spacing:0;margin:0">'+
+          '<input type="checkbox" id="er_mes_'+i+'_'+mi+'" '+checked+'> '+m+'</label>';
+      }).join('');
+      mesesHTML='<div class="field"><label>Meses da Solidariedade</label>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">'+checkboxes+'</div></div>';
+    }
+    itensHTML+=
+      '<div style="border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px">'+
+      '<div style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">'+
+        'Item '+(i+1)+' — '+tipoLabel+
+      '</div>'+
+      '<div class="row c2">'+
+        '<div class="field"><label>Tipo</label><select id="er_tipo_'+i+'">'+tipoOpts+'</select></div>'+
+        '<div class="field"><label>Ano de referência</label><select id="er_ano_'+i+'">'+anoOpts+'</select></div>'+
+      '</div>'+
+      mesesHTML+
+      '<div class="row c2">'+
+        '<div class="field"><label>Valor (R$)</label>'+
+          '<input class="input" type="number" step="0.01" id="er_val_'+i+'" value="'+(+it.valor||0).toFixed(2)+'"></div>'+
+        '<div class="field"><label>Referência (texto)</label>'+
+          '<input class="input" id="er_ref_'+i+'" value="'+esc(it.refTexto||'')+'"></div>'+
+      '</div></div>';
+  });
+  openModal("Editar recibo "+numFmt(r),
+    '<div class="row c2">'+
+      '<div class="field"><label>Data do pagamento</label>'+
+        '<input class="input" type="date" id="er_data" value="'+r.data+'"></div>'+
+      '<div class="field"><label>Forma de pagamento</label>'+
+        '<select id="er_forma">'+FP.map(f=>'<option'+(r.formaPag===f?' selected':'')+'>'+f+'</option>').join('')+'</select></div>'+
+    '</div>'+
+    '<div style="margin:4px 0 14px;font-size:12px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em">Itens do recibo</div>'+
+    itensHTML+
+    '<div class="field"><label>Observação</label><textarea id="er_obs">'+esc(r.obs||'')+'</textarea></div>',
+  ()=>{
     r.data=$("#er_data").value||r.data;
     r.formaPag=$("#er_forma").value;
     r.obs=$("#er_obs").value.trim();
+    r.itens.forEach((it,i)=>{
+      const novoTipo=document.getElementById("er_tipo_"+i)?.value||it.tipo;
+      const novoAno=+document.getElementById("er_ano_"+i)?.value||it.ano;
+      const novoVal=+document.getElementById("er_val_"+i)?.value||it.valor;
+      const novaRef=(document.getElementById("er_ref_"+i)?.value||"").trim();
+      it.tipo=novoTipo;it.ano=novoAno;it.valor=novoVal;
+      if(novoTipo==="solidariedade"){
+        it.meses=MESES_ABV.map((_,mi)=>{
+          const cb=document.getElementById("er_mes_"+i+"_"+mi);
+          return cb&&cb.checked?{mes:mi,ano:novoAno}:null;
+        }).filter(Boolean);
+        const nomes=it.meses.map(m=>MESES_ABV[m.mes]).join(", ")+"/"+novoAno;
+        it.refTexto=novaRef||"Solidariedade ref. "+nomes;
+      }else{
+        it.refTexto=novaRef;
+      }
+    });
+    r.total=r.itens.reduce((s,it)=>s+(+it.valor||0),0);
     save();render();toast("Recibo atualizado.");
-  });
+  },null,"wide");
 }
 
 /* ---- Histórico ---- */
-let histQ="";
+let histQ="",histTipo="todos",histAno="todos",histForma="todas",histOrd="recente";
 function renderHistorico(){
   const c=$("#content");
   const card=el("div",{class:"card"});
@@ -1604,22 +2072,83 @@ function renderHistorico(){
   sb.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg><input class="input" placeholder="Buscar por nº, comunidade, data…" value="${esc(histQ)}">`;
   sb.querySelector("input").addEventListener("input",e=>{histQ=e.target.value;drawHist();});
   hd.appendChild(sb);card.appendChild(hd);
+
+  // barra de filtros
+  const anos=[...new Set(S.recibos.map(r=>r.data?+r.data.slice(0,4):ANO_ATUAL))].sort((a,b)=>b-a);
+  const formas=[...new Set(S.recibos.map(r=>r.formaPag).filter(Boolean))];
+  const filtBar=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--surface-2)"});
+  const mkSel=(id,label,opts)=>{
+    const w=document.createElement("div");
+    w.innerHTML=`<label style="font-size:10px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">${label}</label><select id="${id}" style="padding:6px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;background:var(--surface-3);color:var(--ink)">${opts}</select>`;
+    return w;
+  };
+  filtBar.append(
+    mkSel("histTipoSel","Tipo",`
+      <option value="todos">Todos</option>
+      <option value="padrao">Solidariedade/Societária/Aluguel</option>
+      <option value="evento">Evento</option>
+    `),
+    mkSel("histAnoSel","Ano",`<option value="todos">Todos</option>${anos.map(a=>`<option value="${a}">${a}</option>`).join("")}`),
+    mkSel("histFormaSel","Forma de pagamento",`<option value="todas">Todas</option>${formas.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join("")}`),
+    mkSel("histOrdSel","Ordenar por",`
+      <option value="recente">Mais recente</option>
+      <option value="antigo">Mais antigo</option>
+      <option value="maiorValor">Maior valor</option>
+      <option value="menorValor">Menor valor</option>
+    `)
+  );
+  card.appendChild(filtBar);
+  // restaurar valores selecionados
+  setTimeout(()=>{
+    const setVal=(id,val)=>{const e2=document.getElementById(id);if(e2)e2.value=val;};
+    setVal("histTipoSel",histTipo);setVal("histAnoSel",histAno);setVal("histFormaSel",histForma);setVal("histOrdSel",histOrd);
+    ["histTipoSel","histAnoSel","histFormaSel","histOrdSel"].forEach(id=>{
+      const e2=document.getElementById(id);
+      if(e2)e2.addEventListener("change",()=>{
+        histTipo=document.getElementById("histTipoSel").value;
+        histAno=document.getElementById("histAnoSel").value;
+        histForma=document.getElementById("histFormaSel").value;
+        histOrd=document.getElementById("histOrdSel").value;
+        drawHist();
+      });
+    });
+  },0);
+
   const bd=el("div",{class:"bd"});bd.style.padding="0";bd.id="histBody";card.appendChild(bd);
   c.appendChild(card);drawHist();
 }
 function drawHist(){
   const bd=$("#histBody");if(!bd)return;
   const q=histQ.trim().toLowerCase();
-  let recs=[...S.recibos].sort((a,b)=>b.numero-a.numero);
+  let recs=[...S.recibos];
+  // filtro tipo
+  if(histTipo==="evento")recs=recs.filter(r=>r.tipoRecibo==="evento");
+  else if(histTipo==="padrao")recs=recs.filter(r=>r.tipoRecibo!=="evento");
+  // filtro ano
+  if(histAno!=="todos")recs=recs.filter(r=>r.data&&r.data.slice(0,4)===histAno);
+  // filtro forma de pagamento
+  if(histForma!=="todas")recs=recs.filter(r=>r.formaPag===histForma);
+  // busca textual
   if(q)recs=recs.filter(r=>(numFmt(r).includes(q)||pagadorLabel(r).toLowerCase().includes(q)||fmtDateBR(r.data).includes(q)||resumoRef(r).toLowerCase().includes(q)));
-  if(!recs.length){bd.innerHTML=emptyHTML("clock",S.recibos.length?"Nada encontrado":"Nenhum recibo emitido",S.recibos.length?"Tente outro termo de busca.":"Os recibos emitidos aparecem aqui.");return;}
+  // ordenação
+  recs.sort((a,b)=>{
+    const da=(a.emitidoEm||a.data||""),db=(b.emitidoEm||b.data||"");
+    if(histOrd==="recente"){if(da!==db)return db.localeCompare(da);return (b.numero||0)-(a.numero||0);}
+    if(histOrd==="antigo"){if(da!==db)return da.localeCompare(db);return (a.numero||0)-(b.numero||0);}
+    if(histOrd==="maiorValor")return (b.total||0)-(a.total||0);
+    if(histOrd==="menorValor")return (a.total||0)-(b.total||0);
+    return 0;
+  });
+  if(!recs.length){bd.innerHTML=emptyHTML("clock",S.recibos.length?"Nada encontrado":"Nenhum recibo emitido",S.recibos.length?"Tente ajustar os filtros ou a busca.":"Os recibos emitidos aparecem aqui.");return;}
   bd.innerHTML="";
   const tb=el("table");
-  tb.innerHTML="<thead><tr><th>Nº</th><th>Data</th><th>Pagador</th><th>Referência</th><th class='num'>Valor</th><th></th></tr></thead>";
+  tb.innerHTML="<thead><tr><th>Nº</th><th>Data</th><th>Pagador</th><th>Referência</th><th class='num'>Valor</th><th>Envio</th><th></th></tr></thead>";
   const body=el("tbody");
   recs.forEach(r=>{
     const tr=el("tr");
-    tr.innerHTML=`<td><span class="pill">${numFmt(r)}</span></td><td>${fmtDateBR(r.data)}</td><td><b>${esc(pagadorLabel(r))}</b></td><td style="color:var(--ink-soft);font-size:13px">${esc(resumoRef(r))}</td><td class="num">${brl(r.total)}</td>`;
+    const evBadge=r.tipoRecibo==="evento"?`<span class="pill" style="background:var(--purple-tint);color:var(--purple);border-color:rgba(176,126,255,.2);margin-right:5px">Evento</span>`:"";
+    tr.innerHTML=`<td>${evBadge}<span class="pill">${numFmt(r)}</span></td><td>${fmtDateBR(r.data)}</td><td><b>${esc(pagadorLabel(r))}</b></td><td style="color:var(--ink-soft);font-size:13px">${esc(resumoRef(r))}</td><td class="num">${brl(r.total)}</td>`;
+    const tdEnvio=el("td");tdEnvio.appendChild(mkBadgeEnvio(r,drawHist));tr.appendChild(tdEnvio);
     const td=el("td",{style:"text-align:right;white-space:nowrap"});
     td.append(
       el("button",{class:"btn ghost sm",onclick:()=>verRecibo(r.id)},"Ver"),
@@ -1673,28 +2202,61 @@ function renderConfig(){
   c.appendChild(save1);
 
   // backup
-  const card4=el("div",{class:"card"});card4.style.marginTop="28px";
-  // Card segurança
-  const cardSeg=el("div",{class:"card"});cardSeg.style.marginTop="20px";
-  cardSeg.appendChild(el("div",{class:"hd"},el("h2",{},"Segurança")));
-  const bdSeg=el("div",{class:"bd"});
-  bdSeg.innerHTML=`
+  // Card configuração de evento
+  const cardEv=el("div",{class:"card"});cardEv.style.marginTop="28px";
+  cardEv.appendChild(el("div",{class:"hd"},el("h2",{},"Evento — recibo de inscrição")));
+  const bdEv=el("div",{class:"bd"});
+  bdEv.innerHTML=`
+    <div class="field"><label>Nome do evento</label><input class="input" id="c_evNome" value="${esc(S.config.eventoNome||"")}" placeholder="Ex.: Seminário Kolping de Gestão & Inovação do Terceiro Setor"></div>
     <div class="row c2">
-      <div class="field"><label>Senha de acesso <span class="hint">(deixe em branco para desativar)</span></label>
-        <input class="input" type="password" id="c_senha" placeholder="Digite uma senha" value="${esc(S.config.senha||"")}"></div>
-      <div class="field"><label>Sessão automática (minutos) <span class="hint">(0 = nunca expirar)</span></label>
-        <input class="input" type="number" id="c_sessao" min="0" max="480" value="${S.config.sessaoMins||0}" placeholder="Ex: 30"></div>
-    </div>
-    <div style="font-size:12px;color:var(--ink-muted);margin-top:4px">Com senha ativa, o sistema pedirá login ao abrir. A sessão expira após o tempo definido sem interação.</div>`;
-  const btnSeg=el("button",{class:"btn primary",style:"margin-top:14px",onclick:()=>{
-    S.config.senha=document.getElementById("c_senha").value.trim();
-    S.config.sessaoMins=+document.getElementById("c_sessao").value||0;
-    save();toast("Configurações de segurança salvas.");
-    if(S.config.senha)sessionStorage.setItem("kolping_auth",S.config.senha);
+      <div class="field"><label>Valor por pessoa (padrão)</label><input class="input" type="number" step="0.01" id="c_evValor" value="${(S.config.eventoValor||265).toFixed(2)}"></div>
+      <div class="field"><label>Próximo número do recibo de evento</label><input class="input" type="number" min="1" id="c_evSeq" value="${S.config.eventoSeq||1}"><span class="hint">Os recibos de evento têm numeração própria (EV-1/${ANO_ATUAL}, EV-2/${ANO_ATUAL}...)</span></div>
+    </div>`;
+  const btnEv=el("button",{class:"btn primary",style:"margin-top:8px",onclick:()=>{
+    S.config.eventoNome=document.getElementById("c_evNome").value.trim();
+    S.config.eventoValor=+document.getElementById("c_evValor").value||265;
+    S.config.eventoSeq=+document.getElementById("c_evSeq").value||1;
+    save();toast("Configurações do evento salvas.");
   }});
-  btnSeg.textContent="Salvar segurança";
-  bdSeg.appendChild(btnSeg);
-  cardSeg.appendChild(bdSeg);c.appendChild(cardSeg);
+  btnEv.textContent="Salvar evento";
+  bdEv.appendChild(btnEv);
+  cardEv.appendChild(bdEv);c.appendChild(cardEv);
+
+  const card4=el("div",{class:"card"});card4.style.marginTop="28px";
+  // Card conta / usuários
+  const cardConta=el("div",{class:"card"});cardConta.style.marginTop="20px";
+  cardConta.appendChild(el("div",{class:"hd"},el("h2",{},"Conta e usuários")));
+  const bdConta=el("div",{class:"bd"});
+  bdConta.innerHTML=`<div style="font-size:13px;color:var(--ink-soft);margin-bottom:14px">
+    Conectado como <b style="color:var(--ink)">${esc(_sbPerfil?.nome||_sbUser?.email||"")}</b>
+    ${_sbPerfil?.papel==="admin"?' <span class="pill">Administrador</span>':' <span class="pill">Operador</span>'}
+  </div>
+  <div id="listaUsuarios" style="margin-bottom:14px"></div>`;
+  const btnTrocarSenha=el("button",{class:"btn ghost",onclick:async()=>{
+    const nova=prompt("Digite a nova senha (mínimo 6 caracteres):");
+    if(nova&&nova.length>=6){
+      const{error}=await sb.auth.updateUser({password:nova});
+      toast(error?"Erro: "+error.message:"Senha alterada com sucesso!");
+    }else if(nova)toast("A senha deve ter no mínimo 6 caracteres.");
+  }});
+  btnTrocarSenha.textContent="Trocar minha senha";
+  bdConta.appendChild(btnTrocarSenha);
+  cardConta.appendChild(bdConta);c.appendChild(cardConta);
+  // se admin, carregar lista de usuários para aprovar
+  if(_sbPerfil?.papel==="admin"){
+    setTimeout(async()=>{
+      const{data:usuarios}=await sb.from("profiles").select("*").order("criado_em",{ascending:false});
+      const cont=document.getElementById("listaUsuarios");
+      if(!cont||!usuarios)return;
+      const pendentes=usuarios.filter(u=>!u.aprovado);
+      let html=`<div style="font-size:12px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Usuários (${usuarios.length})</div>`;
+      html+=usuarios.map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13px">
+        <span>${esc(u.nome||"(sem nome)")} ${u.papel==="admin"?'<span class="pill">Admin</span>':""}</span>
+        ${u.aprovado?'<span style="color:var(--ok);font-size:12px">✓ Aprovado</span>':`<button class="btn sm primary" onclick="aprovarUsuario('${u.id}')">Aprovar</button>`}
+      </div>`).join("");
+      cont.innerHTML=html;
+    },100);
+  }
 
   card4.appendChild(el("div",{class:"hd"},el("h2",{},"Atalhos de teclado")));
   const bdAtalhos=el("div",{class:"bd"});
@@ -1728,38 +2290,24 @@ function renderConfig(){
   bd4.appendChild(el("input",{type:"file",id:"importCKFile",accept:".csv,.xlsx,.xls",style:"display:none",onchange:importarCKs}));
   card5.appendChild(bd4);c.appendChild(card5);
 
-  // Card Dropbox
-  const cardDrive=el("div",{class:"card"});cardDrive.style.marginTop="20px";
-  cardDrive.appendChild(el("div",{class:"hd"},el("h2",{},"Dropbox — sincronização automática")));
-  const bdDrive=el("div",{class:"bd"});
-  const dbxConectado=!!(_dbxToken||S.config.dropboxToken);
-  bdDrive.innerHTML=`
-    ${dbxConectado?`<div style="display:flex;align-items:center;gap:8px;color:var(--ok);font-weight:600;margin-bottom:12px"><span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block"></span>Conectado ao Dropbox</div>`:`<div style="color:var(--ink-soft);font-size:13.5px;margin-bottom:12px">Não conectado. Gere um token no Dropbox e cole abaixo para sincronizar automaticamente.</div>`}
-    <div class="field"><label>Token de acesso do Dropbox</label>
-    <input class="input" id="c_dbxToken" type="password" placeholder="sl.xxxxxxxxxxxxxxxx..." value="${esc(S.config.dropboxToken||"")}">
-    <span class="hint">Gere em dropbox.com/developers/apps → seu app → Settings → Generate access token</span></div>`;
-  const driveBtns=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap"});
-  driveBtns.append(
-    el("button",{class:"btn primary",onclick:()=>{
-      const v=document.getElementById("c_dbxToken").value.trim();
-      if(!v){iniciarLoginDropbox();return;}
-      S.config.dropboxToken=v;_dbxToken=v;
-      localStorage.setItem("kolping_dbx_token",v);
-      save();dbxSetStatus("connected","Dropbox conectado ✓");
-      toast("Dropbox conectado!");dbxSyncAuto();renderConfig();
-    }},"Conectar ao Dropbox"),
-    el("button",{class:"btn",onclick:dbxSalvar},"⬆ Salvar no Dropbox agora"),
-    el("button",{class:"btn",onclick:dbxCarregar},"⬇ Carregar do Dropbox"),
-    el("button",{class:"btn ghost danger",onclick:()=>{
-      _dbxToken=null;S.config.dropboxToken="";
-      localStorage.removeItem("kolping_dbx_token");
-      save();dbxSetStatus("disconnected","Conectar Dropbox");
-      renderConfig();toast("Desconectado do Dropbox.");
-    }},"Desconectar")
+  // Card sincronização Supabase
+  const cardSync=el("div",{class:"card"});cardSync.style.marginTop="20px";
+  cardSync.appendChild(el("div",{class:"hd"},el("h2",{},"Sincronização na nuvem")));
+  const bdSync=el("div",{class:"bd"});
+  bdSync.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;color:var(--ok);font-weight:600;margin-bottom:12px">
+      <span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block"></span>Conectado ao banco de dados
+    </div>
+    <p style="font-size:13px;color:var(--ink-soft);line-height:1.6">Todos os dados são salvos automaticamente na nuvem (Supabase) a cada alteração. Você pode acessar de qualquer dispositivo fazendo login com seu e-mail e senha.</p>
+    <div id="sbStatus" style="font-size:13px;margin-top:10px"></div>`;
+  const syncBtns=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"});
+  syncBtns.append(
+    el("button",{class:"btn",onclick:async()=>{sbSetStatus("syncing");await salvarDados();toast("Dados sincronizados!");}},"☁ Sincronizar agora"),
+    el("button",{class:"btn",onclick:async()=>{await carregarDados();render();toast("Dados recarregados da nuvem.");}},"⟳ Recarregar da nuvem")
   );
-  bdDrive.appendChild(driveBtns);
-  bdDrive.innerHTML+=`<p style="font-size:12px;color:var(--ink-muted);margin-top:12px">Os dados são salvos automaticamente 3 segundos após cada alteração e sincronizados a cada 2 minutos. Funciona em qualquer navegador ou computador.</p>`;
-  cardDrive.appendChild(bdDrive);c.appendChild(cardDrive);
+  bdSync.appendChild(syncBtns);
+  cardSync.appendChild(bdSync);c.appendChild(cardSync);
+  setTimeout(()=>sbSetStatus("ok"),100);
 }
 function uploadBox(label,val,key){
   const f=el("div",{class:"field"});
@@ -1811,10 +2359,25 @@ function exportData(){
 function importData(e){
   const file=e.target.files[0];if(!file)return;
   const fr=new FileReader();
-  fr.onload=()=>{try{const d=JSON.parse(fr.result);if(!d.config||!Array.isArray(d.comunidades))throw 0;
-    confirmBox("Restaurar este backup? Os dados atuais serão substituídos.",()=>{S=Object.assign(defaultState(),d);save();go("dashboard");toast("Backup restaurado.");});
-  }catch(err){toast("Arquivo inválido.");}};
-  fr.readAsText(file);e.target.value="";
+  fr.onload=()=>{
+    try{
+      const d=JSON.parse(fr.result);
+      if(!d.config||!Array.isArray(d.comunidades))throw new Error("Formato inválido");
+      confirmBox(`Restaurar backup com ${d.comunidades.length} comunidades e ${(d.recibos||[]).length} recibos? Os dados atuais serão substituídos.`,()=>{
+        S=Object.assign(defaultState(),d,{
+          config:Object.assign(defaultState().config,d.config||{}),
+          overrides:Object.assign({},d.overrides||{}),
+          creditos:Object.assign({},d.creditos||{}),
+          favoritos:d.favoritos||[],
+          logOverrides:d.logOverrides||{}
+        });
+        save();go("dashboard");
+        setTimeout(()=>toast(`Backup restaurado! ${S.comunidades.length} comunidades carregadas.`),300);
+      });
+    }catch(err){toast("Arquivo inválido. Verifique se é um backup do Kolping (.json).");}
+  };
+  fr.readAsText(file,"UTF-8");
+  e.target.value="";
 }
 function resetData(){confirmBox("Apagar TODOS os dados (comunidades, entidades e recibos)? Faça um backup antes. Esta ação não pode ser desfeita.",()=>{S=defaultState();save();go("dashboard");toast("Dados apagados.");});}
 
@@ -1915,6 +2478,10 @@ function pdfEwhatsapp(r){
   if(window.html2canvas&&window.jspdf){gerarPDFReal(r,true);}
   else{$("#printArea").innerHTML=reciboHTML(r);setTimeout(()=>{window.print();setTimeout(()=>window.open("https://web.whatsapp.com","_blank"),800);},60);}
 }
+function imprimirColorido(r){
+  $("#printArea").innerHTML=reciboHTML(r);
+  setTimeout(()=>window.print(),60);
+}
 function imprimirPB(r){
   const s=document.createElement("style");s.id="pbStyle";
   s.textContent=`@media print{#printArea *{filter:grayscale(1)!important;color:#000!important;background:#fff!important}}`;
@@ -1938,99 +2505,160 @@ let _relAno=ANO_ATUAL;
 function renderRelatorio(){
   const c=$("#content");
   const anos=[...new Set([ANO_ATUAL,...S.recibos.map(r=>r.data?+r.data.slice(0,4):ANO_ATUAL)])].sort((a,b)=>b-a);
-  const top=el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap"});
-  top.innerHTML=`<label style="font-size:12px;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em">Ano:</label><select id="relAnoSel" style="padding:7px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--surface-2);color:var(--ink)">${anos.map(a=>`<option value="${a}"${a===_relAno?" selected":""}>${a}</option>`).join("")}</select>`;
-  const expBtn=el("button",{class:"btn",onclick:exportarRelatorioCSV});expBtn.innerHTML=svg("file")+"<span>Exportar CSV</span>";
-  const expPdfBtn=el("button",{class:"btn",onclick:exportarRelatorioPDF});expPdfBtn.innerHTML=svg("file")+"<span>Exportar PDF</span>";
-  top.appendChild(expBtn);top.appendChild(expPdfBtn);c.appendChild(top);
-  top.querySelector("select").addEventListener("change",e=>{_relAno=+e.target.value;c.innerHTML="";renderRelatorio();});
+  // barra de controles
+  const top=el("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap"});
+  // filtro de ano
+  const selAnoBl=document.createElement("div");
+  selAnoBl.innerHTML=`<label style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Ano</label><select id="relAnoSel" style="padding:7px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--surface-2);color:var(--ink)">${anos.map(a=>`<option value="${a}"${a===_relAno?" selected":""}>${a}</option>`).join("")}</select>`;
+  // filtro de situação
+  const selSitBl=document.createElement("div");
+  selSitBl.innerHTML=`<label style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Situação</label><select id="relSitSel" style="padding:7px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--surface-2);color:var(--ink)"><option value="todas">Todas</option><option value="atraso">Em atraso</option><option value="dia">Em dia</option></select>`;
+  // ordenação
+  const selOrdBl=document.createElement("div");
+  selOrdBl.innerHTML=`<label style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Ordenar por</label><select id="relOrdSel" style="padding:7px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--surface-2);color:var(--ink)"><option value="nome">Nome A-Z</option><option value="nomeZ">Nome Z-A</option><option value="assocDesc">Mais associados</option><option value="assocAsc">Menos associados</option><option value="pagoDesc">Maior arrecadado</option></select>`;
+  // busca
+  const srchBl=document.createElement("div");
+  srchBl.style.flex="1";srchBl.style.minWidth="160px";
+  srchBl.innerHTML=`<label style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Buscar</label><input id="relBuscaSel" class="input" placeholder="Nome da comunidade…" style="padding:7px 12px">`;
+  top.append(selAnoBl,selSitBl,selOrdBl,srchBl);
+  // botões
+  const btsDiv=el("div",{style:"display:flex;gap:8px;align-self:flex-end"});
+  const expBtn=el("button",{class:"btn",onclick:exportarRelatorioCSV});expBtn.innerHTML=svg("file")+"<span>CSV</span>";
+  const expPdfBtn=el("button",{class:"btn",onclick:exportarRelatorioPDF});expPdfBtn.innerHTML=svg("file")+"<span>PDF</span>";
+  btsDiv.append(expBtn,expPdfBtn);top.appendChild(btsDiv);
+  c.appendChild(top);
+  // listeners — re-renderizar ao mudar filtro
+  ["relAnoSel","relSitSel","relOrdSel","relBuscaSel"].forEach(id=>{
+    const el2=document.getElementById(id);
+    if(el2)el2.addEventListener(id==="relBuscaSel"?"input":"change",()=>{
+      if(id==="relAnoSel")_relAno=+document.getElementById("relAnoSel").value;
+      desenharTabela();
+      if(typeof desenharInadimplencia==="function")desenharInadimplencia();
+    });
+  });
   const ano=_relAno;
   const card=el("div",{class:"card"});
-  card.appendChild(el("div",{class:"hd"},el("h2",{},`Situação de pagamentos — ${ano}`)));
+  card.appendChild(el("div",{class:"hd"},el("h2",{id:"relTitulo"},`Situação de pagamentos — ${ano}`)));
   const bd=el("div",{class:"bd",style:"padding:0;overflow-x:auto"});
-  const tb=el("table",{style:"min-width:1100px"});
-  // thead com nome em linha única
-  tb.innerHTML=`<thead><tr>
-    <th style="min-width:280px;position:sticky;left:0;background:var(--surface-2);z-index:2">Comunidade</th>
-    <th class="num" style="min-width:80px">Assoc.</th>
-    <th class="num" style="min-width:72px">Soc. ${ano}</th>
-    ${MESES_ABV.map(m=>`<th class="num" style="min-width:46px;font-size:10px">${m}</th>`).join("")}
-    <th class="num" style="min-width:100px">Total pago</th>
-  </tr></thead>`;
-  const body=el("tbody");
-  let totGeral=0;
-  // cores dark
-  const cores={pago:"var(--ok)",atraso:"var(--warn)","—":"var(--ink-muted)",isento:"var(--ink-soft)",futuro:"var(--line)"};
-  const emojis={pago:"✓",atraso:"✗","—":"—",isento:"○",futuro:"·"};
-  [...S.comunidades].sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).forEach(co=>{
-    const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===co.id);
-    const tot=assocAno(co,ano);
-    const socPago=recs.some(r=>r.itens.some(it=>it.tipo==="societaria"&&it.ano===ano));
-    const ovSoc=getOverride(co.id,ano,0,"societaria");
-    const socStatus=ovSoc?ovSoc.status:(socPago?"pago":"atraso");
-    const solStatus=MESES.map((_,mi)=>{
-      const ov=getOverride(co.id,ano,mi,"solidariedade");
-      if(ov)return ov.status;
-      return recs.some(r=>r.itens.some(it=>it.tipo==="solidariedade"&&(it.meses||[]).some(m=>m.mes===mi&&m.ano===ano)))?"pago":"—";
-    });
-    const totPago=recs.reduce((s,r)=>s+(r.data&&r.data.startsWith(ano+"")?(+r.total||0):0),0);
-    totGeral+=totPago;
-    const tr=el("tr");
-    tr.innerHTML=`
-      <td style="white-space:nowrap;position:sticky;left:0;background:var(--surface);font-weight:500" title="${esc(co.nome)}">${esc(co.nome)}</td>
-      <td class="num" style="color:var(--ink-soft)">${tot}</td>
-      <td class="num" style="color:${cores[socStatus]};font-weight:700;font-size:15px">${emojis[socStatus]||socStatus}</td>
-      ${solStatus.map(s=>`<td class="num" style="color:${cores[s]||"var(--ink-muted)"};font-weight:600;font-size:14px">${emojis[s]||s}</td>`).join("")}
-      <td class="num" style="font-weight:600;color:var(--ink)">${brl(totPago)}</td>`;
-    body.appendChild(tr);
-  });
-  const tfr=el("tr",{style:"background:var(--brand-tint);font-weight:700;border-top:1px solid var(--brand)"});
-  tfr.innerHTML=`<td colspan="${3+12}" style="color:var(--brand);font-weight:700;padding:12px 16px">Total arrecadado em ${ano}</td><td class="num" style="color:var(--brand);font-weight:700">${brl(totGeral)}</td>`;
-  body.appendChild(tfr);
-  tb.appendChild(body);bd.appendChild(tb);card.appendChild(bd);c.appendChild(card);
+  const tb=el("table",{id:"relTabela",style:"min-width:1100px"});
+  bd.appendChild(tb);card.appendChild(bd);c.appendChild(card);
   // legenda
   const leg=el("div",{style:"margin-top:12px;font-size:12px;color:var(--ink-soft);display:flex;gap:20px;flex-wrap:wrap"});
   leg.innerHTML=`<span style="color:var(--ok)">✓ Pago</span><span style="color:var(--warn)">✗ Em atraso</span><span style="color:var(--ink-soft)">○ Isento</span><span style="color:var(--ink-muted)">— Não venceu / sem registro</span>`;
   c.appendChild(leg);
 
+  function desenharTabela(){
+    const ano2=_relAno;
+    const sit=document.getElementById("relSitSel")?.value||"todas";
+    const ord=document.getElementById("relOrdSel")?.value||"nome";
+    const busca=(document.getElementById("relBuscaSel")?.value||"").toLowerCase().trim();
+    document.getElementById("relTitulo").textContent=`Situação de pagamentos — ${ano2}`;
+    tb.innerHTML=`<thead><tr>
+      <th style="min-width:280px;position:sticky;left:0;background:var(--surface-2);z-index:2">Comunidade</th>
+      <th class="num" style="min-width:80px">Assoc.</th>
+      <th class="num" style="min-width:72px">Soc. ${ano2}</th>
+      ${MESES_ABV.map(m=>`<th class="num" style="min-width:46px;font-size:10px">${m}</th>`).join("")}
+      <th class="num" style="min-width:100px">Total pago</th>
+    </tr></thead>`;
+    const body=el("tbody");
+    const cores={pago:"var(--ok)",atraso:"var(--warn)","—":"var(--ink-muted)",isento:"var(--ink-soft)"};
+    const emojis={pago:"✓",atraso:"✗","—":"—",isento:"○"};
+    let lista=[...S.comunidades];
+    // filtro situação
+    if(sit!=="todas")lista=lista.filter(co=>{
+      const emDia=situacao(co.id,null,ano2).emDia;
+      return sit==="dia"?emDia:!emDia;
+    });
+    // busca
+    if(busca)lista=lista.filter(co=>co.nome.toLowerCase().includes(busca));
+    // ordenação
+    lista.sort((a,b)=>{
+      if(ord==="nome")return a.nome.localeCompare(b.nome);
+      if(ord==="nomeZ")return b.nome.localeCompare(a.nome);
+      if(ord==="assocDesc")return assocAno(b,ano2)-assocAno(a,ano2);
+      if(ord==="assocAsc")return assocAno(a,ano2)-assocAno(b,ano2);
+      if(ord==="pagoDesc"){
+        const pa=S.recibos.filter(r=>r.pagadorId===a.id&&r.data?.startsWith(ano2+"")).reduce((s,r)=>s+(+r.total||0),0);
+        const pb=S.recibos.filter(r=>r.pagadorId===b.id&&r.data?.startsWith(ano2+"")).reduce((s,r)=>s+(+r.total||0),0);
+        return pb-pa;
+      }
+      return 0;
+    });
+    let totGeral=0;
+    lista.forEach(co=>{
+      const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===co.id);
+      const tot=assocAno(co,ano2);
+      const socPago=recs.some(r=>r.itens.some(it=>it.tipo==="societaria"&&it.ano===ano2));
+      const ovSoc=getOverride(co.id,ano2,0,"societaria");
+      const socStatus=ovSoc?ovSoc.status:(socPago?"pago":"atraso");
+      const solStatus=MESES.map((_,mi)=>{
+        const ov=getOverride(co.id,ano2,mi,"solidariedade");
+        if(ov)return ov.status;
+        return recs.some(r=>r.itens.some(it=>it.tipo==="solidariedade"&&(it.meses||[]).some(m=>m.mes===mi&&m.ano===ano2)))?"pago":"—";
+      });
+      const totPago=recs.reduce((s,r)=>s+(r.data&&r.data.startsWith(ano2+"")?(+r.total||0):0),0);
+      totGeral+=totPago;
+      const tr=el("tr");
+      tr.innerHTML=`
+        <td style="white-space:nowrap;position:sticky;left:0;background:var(--surface);font-weight:500">${esc(co.nome)}</td>
+        <td class="num" style="color:var(--ink-soft)">${tot}</td>
+        <td class="num" style="color:${cores[socStatus]};font-weight:700;font-size:15px">${emojis[socStatus]||socStatus}</td>
+        ${solStatus.map(s=>`<td class="num" style="color:${cores[s]||"var(--ink-muted)"};font-weight:600;font-size:14px">${emojis[s]||s}</td>`).join("")}
+        <td class="num" style="font-weight:600;color:var(--ink)">${brl(totPago)}</td>`;
+      body.appendChild(tr);
+    });
+    // linha de total
+    const tfr=el("tr",{style:"background:var(--brand-tint);border-top:2px solid var(--brand)"});
+    tfr.innerHTML=`<td colspan="${3+12}" style="color:var(--brand);font-weight:700;padding:12px 16px">Total (${lista.length} comunidades)</td><td class="num" style="color:var(--brand);font-weight:700">${brl(totGeral)}</td>`;
+    body.appendChild(tfr);
+    tb.appendChild(body);
+  }
+  desenharTabela();
+
   // inadimplência por tempo
   const inadCard=el("div",{class:"card",style:"margin-top:20px"});
   inadCard.appendChild(el("div",{class:"hd"},el("h2",{},"Inadimplência por tempo de atraso")));
   const inadBd=el("div",{class:"bd",style:"padding:0"});
-  const grupos={1:[],2:[],3:[],4:[]};// 1=1mês, 2=2-3, 3=4-6, 4=7+
-  S.comunidades.forEach(co=>{
-    const st=situacao(co.id,null,ano);
-    if(st.emDia)return;
-    // contar meses de solidariedade em atraso
-    let mesesAtr=0;
-    for(let m=0;m<=mes;m++){const sit=getMesSit(co.id,ano,m,"solidariedade");if(sit.status==="atraso")mesesAtr++;}
-    const grp=mesesAtr<=1?1:mesesAtr<=3?2:mesesAtr<=6?3:4;
-    grupos[grp].push({co,mesesAtr,pendencias:st.pendencias});
-  });
-  const grpLabels={1:{l:"1 mês",c:"var(--ok)"},2:{l:"2–3 meses",c:"var(--brand)"},3:{l:"4–6 meses",c:"#E88020"},4:{l:"7+ meses",c:"var(--warn)"}};
-  let temInad=false;
-  const inadGrid=el("div",{style:"display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:1px solid var(--line)"});
-  [1,2,3,4].forEach(g=>{
-    const{l,c}=grpLabels[g];const lst=grupos[g];
-    const col=el("div",{style:`padding:16px;border-right:1px solid var(--line);${g===4?"border-right:0":""}`});
-    col.innerHTML=`<div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">${l}</div>
-    <div style="font-size:28px;font-weight:800;color:${c};margin-bottom:10px">${lst.length}</div>`;
-    if(lst.length){
-      temInad=true;
-      lst.forEach(({co,mesesAtr})=>{
-        const row=el("div",{style:"display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line-soft);font-size:12.5px"});
-        row.innerHTML=`<span style="color:var(--ink);font-weight:500">${esc(co.nome)}</span><span style="color:${c};font-weight:700">${mesesAtr}m</span>`;
-        col.appendChild(row);
-      });
-    }else{
-      col.innerHTML+=`<div style="font-size:12px;color:var(--ink-muted)">Nenhuma</div>`;
-    }
-    inadGrid.appendChild(col);
-  });
-  inadBd.appendChild(inadGrid);
-  if(!temInad)inadBd.innerHTML=`<div style="padding:24px;text-align:center;color:var(--ok);font-weight:600">✓ Nenhuma comunidade em atraso</div>`;
   inadCard.appendChild(inadBd);
   c.appendChild(inadCard);
+
+  function desenharInadimplencia(){
+    const anoI=_relAno;
+    const mesAtualI=new Date().getMonth();
+    inadBd.innerHTML="";
+    const grupos={1:[],2:[],3:[],4:[]};// 1=1mês, 2=2-3, 3=4-6, 4=7+
+    S.comunidades.forEach(co=>{
+      const st=situacao(co.id,null,anoI);
+      if(st.emDia)return;
+      let mesesAtr=0;
+      for(let m=0;m<=mesAtualI;m++){const sit=getMesSit(co.id,anoI,m,"solidariedade");if(sit.status==="atraso")mesesAtr++;}
+      const grp=mesesAtr<=1?1:mesesAtr<=3?2:mesesAtr<=6?3:4;
+      grupos[grp].push({co,mesesAtr,pendencias:st.pendencias});
+    });
+    const grpLabels={1:{l:"1 mês",c:"var(--ok)"},2:{l:"2–3 meses",c:"var(--brand)"},3:{l:"4–6 meses",c:"#E88020"},4:{l:"7+ meses",c:"var(--warn)"}};
+    let temInad=false;
+    const inadGrid=el("div",{style:"display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:1px solid var(--line)"});
+    [1,2,3,4].forEach(g=>{
+      const{l,c:cor}=grpLabels[g];const lst=grupos[g];
+      const col=el("div",{style:`padding:16px;border-right:1px solid var(--line);${g===4?"border-right:0":""}`});
+      col.innerHTML=`<div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);font-weight:700;margin-bottom:8px">${l}</div>
+      <div style="font-size:28px;font-weight:800;color:${cor};margin-bottom:10px">${lst.length}</div>`;
+      if(lst.length){
+        temInad=true;
+        lst.forEach(({co,mesesAtr})=>{
+          const row=el("div",{style:"display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line-soft);font-size:12.5px"});
+          row.innerHTML=`<span style="color:var(--ink);font-weight:500">${esc(co.nome)}</span><span style="color:${cor};font-weight:700">${mesesAtr}m</span>`;
+          col.appendChild(row);
+        });
+      }else{
+        col.innerHTML+=`<div style="font-size:12px;color:var(--ink-muted)">Nenhuma</div>`;
+      }
+      inadGrid.appendChild(col);
+    });
+    if(!temInad){inadBd.innerHTML=`<div style="padding:24px;text-align:center;color:var(--ok);font-weight:600">✓ Nenhuma comunidade em atraso</div>`;}
+    else{inadBd.appendChild(inadGrid);}
+  }
+  desenharInadimplencia();
 }
 function exportarRelatorioCSV(){
   const ano=_relAno;
@@ -2173,7 +2801,7 @@ function gerarCartaCobranca(coId){
       Agradecemos a atenção e aguardamos a regularização.
     </div>
     <div style="margin-top:50px;text-align:center">
-      ${cfg.assinatura?`<img src="${cfg.assinatura}" style="max-height:130px;display:block;margin:0 auto 4px" alt="assinatura">`:""}
+      ${cfg.assinatura?`<img src="${cfg.assinatura}" style="max-height:160px;display:block;margin:0 auto 4px" alt="assinatura">`:""}
 
       <div style="border-top:1px solid #1c1a17;width:280px;margin:0 auto;padding-top:8px">
         <div style="font-weight:600;font-size:14.5px">${esc(cfg.assinante)}</div>
@@ -2188,10 +2816,47 @@ function gerarCartaCobranca(coId){
   openModal(`Carta de cobrança — ${esc(co.nome)}`,
     `<div style="background:var(--surface-2);margin:-22px;padding:22px;border-radius:0 0 18px 18px">${cartaHTML}</div>`,
     null,[
-    {label:"Imprimir / PDF",cls:"primary",fn:()=>{document.getElementById("printArea").innerHTML=cartaHTML;setTimeout(()=>window.print(),60);}},
-    {label:"📲 Imprimir + WhatsApp",cls:"ghost",fn:()=>{document.getElementById("printArea").innerHTML=cartaHTML;setTimeout(()=>{window.print();setTimeout(()=>window.open("https://web.whatsapp.com","_blank"),800);},60);}},
+    {label:"⬇ Baixar PDF",cls:"primary",fn:()=>gerarCartaPDF(cartaHTML,co.nome)},
+    {label:"📲 PDF + WhatsApp",cls:"ghost",fn:()=>gerarCartaPDF(cartaHTML,co.nome,true)},
+    {label:"✉ E-mail",cls:"ghost",fn:()=>enviarEmailCarta(co,totalPend)},
     {label:"Fechar",cls:"ghost",fn:closeModal}
   ],"wide");
+}
+async function gerarCartaPDF(cartaHTML,nomeCK,abrirWpp){
+  if(!window.html2canvas||!window.jspdf){
+    document.getElementById("printArea").innerHTML=cartaHTML;setTimeout(()=>window.print(),60);return;
+  }
+  toast("Gerando PDF da carta…");
+  const div=document.createElement("div");
+  div.style.cssText="position:fixed;left:-9999px;top:0;width:794px;background:#fff;z-index:-1";
+  div.innerHTML=cartaHTML;
+  document.body.appendChild(div);
+  await new Promise(res=>setTimeout(res,300));
+  try{
+    const canvas=await html2canvas(div,{scale:2,useCORS:true,backgroundColor:"#fff",logging:false});
+    document.body.removeChild(div);
+    const{jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+    const imgW=190,imgH=(canvas.height*imgW)/canvas.width;
+    pdf.addImage(canvas.toDataURL("image/jpeg",.95),"JPEG",10,10,imgW,Math.min(imgH,277));
+    const nome=`Carta_Cobranca_${nomeCK.replace(/\s+/g,"_").slice(0,40)}.pdf`;
+    pdf.save(nome);
+    if(abrirWpp)setTimeout(()=>window.open("https://web.whatsapp.com","_blank"),500);
+    toast("PDF da carta salvo: "+nome);
+  }catch(e){
+    console.error(e);
+    if(document.body.contains(div))document.body.removeChild(div);
+    document.getElementById("printArea").innerHTML=cartaHTML;
+    setTimeout(()=>window.print(),60);
+    toast("Usando impressão do navegador como alternativa.");
+  }
+}
+function enviarEmailCarta(co,totalPend){
+  const cfg=S.config;
+  const assunto=encodeURIComponent(`Carta de cobrança — ${co.nome}`);
+  const corpo=encodeURIComponent(`Prezados,\n\nSegue carta de cobrança referente às pendências da ${co.nome}.\n\nValor total pendente: ${brl(totalPend)}\n\nAtenciosamente,\n${cfg.assinante}\n${cfg.cargo}\n${cfg.org||cfg.razao}`);
+  window.open(`mailto:?subject=${assunto}&body=${corpo}`,"_blank");
+  toast("Cliente de e-mail aberto. Anexe o PDF manualmente.");
 }
 
 /* ============ BACKUP AUTOMÁTICO ============ */
@@ -2364,12 +3029,11 @@ async function dbxRequest(path,body,isDownload=false){
   }catch(e){return null;}
 }
 
-async function dbxSalvar(){
+async function dbxSalvar(retry){
   if(!_dbxToken||_dbxSyncing)return;
   _dbxSyncing=true;dbxSetStatus("syncing","Salvando no Dropbox…");
   try{
     const content=JSON.stringify(S,null,2);
-    // Usar a API de arquivos via header Dropbox-API-Arg (evita CORS com content endpoint)
     const r=await fetch("https://content.dropboxapi.com/2/files/upload",{
       method:"POST",
       headers:{
@@ -2381,16 +3045,20 @@ async function dbxSalvar(){
     });
     if(r.ok){
       dbxSetStatus("connected","Dropbox salvo ✓ — "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}));
+      _dbxSyncing=false;
     }else{
       const err=await r.text();
       console.error("Dropbox save error:",r.status,err);
-      dbxSetStatus("connected","Dropbox: erro ao salvar");
+      _dbxSyncing=false;
+      if(!retry){setTimeout(()=>dbxSalvar(true),4000);} // 1 retentativa automática
+      else{dbxSetStatus("connected","Dropbox: dados salvos localmente · nuvem indisponível");}
     }
   }catch(e){
     console.error("Dropbox save exception:",e);
-    dbxSetStatus("connected","Dropbox conectado ✓");
+    _dbxSyncing=false;
+    if(!retry){setTimeout(()=>dbxSalvar(true),4000);}
+    else{dbxSetStatus("connected","Dropbox: dados salvos localmente · nuvem indisponível");}
   }
-  finally{_dbxSyncing=false;}
 }
 
 async function dbxCarregar(){
@@ -2427,51 +3095,146 @@ function driveSalvar(){dbxSalvar();}
 function driveCarregar(){dbxCarregar();}
 function iniciarLoginDrive(){iniciarLoginDropbox();}
 
-/* ============ SENHA DE ACESSO ============ */
-let _autenticado=false;
-function checkSenha(){
-  const senha=S.config.senha||"";
-  if(!senha){_autenticado=true;return true;}
-  const saved=sessionStorage.getItem("kolping_auth");
-  if(saved===senha){_autenticado=true;return true;}
-  return false;
-}
-function telaLogin(){
+/* ============ AUTENTICAÇÃO SUPABASE ============ */
+function telaAuth(modo){
+  modo=modo||"login";
+  const logoHTML=S.config.logo?`<img src="${S.config.logo}" style="width:56px;height:56px;border-radius:14px;object-fit:contain">`:`<span style="color:#fff;font-weight:800;font-size:22px">K</span>`;
+  let campos="",botao="",links="";
+  if(modo==="login"){
+    campos=`
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">E-mail</label>
+        <input id="au_email" type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:20px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Senha</label>
+        <input id="au_senha" type="password" placeholder="••••••••" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')authLogin()">
+      </div>`;
+    botao=`<button onclick="authLogin()" style="width:100%;padding:12px;background:linear-gradient(135deg,#F07830,#C85E1C);color:#fff;border:0;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(240,120,48,.3)">Entrar</button>`;
+    links=`<div style="text-align:center;margin-top:18px;font-size:13px;color:#8A8FA8">
+      <a onclick="telaAuth('cadastro')" style="color:#F07830;cursor:pointer;text-decoration:none">Criar conta</a>
+      <span style="margin:0 8px">·</span>
+      <a onclick="telaAuth('recuperar')" style="color:#8A8FA8;cursor:pointer;text-decoration:none">Esqueci a senha</a>
+    </div>`;
+  }else if(modo==="cadastro"){
+    campos=`
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Nome completo</label>
+        <input id="au_nome" type="text" placeholder="Seu nome" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Cargo</label>
+        <input id="au_cargo" type="text" placeholder="Ex.: Tesoureiro" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">E-mail</label>
+        <input id="au_email" type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:20px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Senha</label>
+        <input id="au_senha" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>`;
+    botao=`<button onclick="authCadastro()" style="width:100%;padding:12px;background:linear-gradient(135deg,#F07830,#C85E1C);color:#fff;border:0;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(240,120,48,.3)">Criar conta</button>`;
+    links=`<div style="text-align:center;margin-top:18px;font-size:13px;color:#8A8FA8">
+      Já tem conta? <a onclick="telaAuth('login')" style="color:#F07830;cursor:pointer;text-decoration:none">Entrar</a>
+    </div>`;
+  }else if(modo==="recuperar"){
+    campos=`
+      <p style="color:#8A8FA8;font-size:13px;margin-bottom:18px;line-height:1.5">Digite seu e-mail e enviaremos um link para redefinir sua senha.</p>
+      <div style="margin-bottom:20px">
+        <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">E-mail</label>
+        <input id="au_email" type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box">
+      </div>`;
+    botao=`<button onclick="authRecuperar()" style="width:100%;padding:12px;background:linear-gradient(135deg,#F07830,#C85E1C);color:#fff;border:0;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(240,120,48,.3)">Enviar link</button>`;
+    links=`<div style="text-align:center;margin-top:18px;font-size:13px;color:#8A8FA8">
+      <a onclick="telaAuth('login')" style="color:#F07830;cursor:pointer;text-decoration:none">Voltar ao login</a>
+    </div>`;
+  }
+  const titulos={login:"Entrar",cadastro:"Criar conta",recuperar:"Recuperar senha"};
   document.body.innerHTML=`
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#13151F;font-family:Inter,sans-serif">
-      <div style="background:#1C1F2E;border:1px solid #2E3248;border-radius:18px;padding:40px;width:340px;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#13151F;font-family:Inter,sans-serif;padding:20px">
+      <div style="background:#1C1F2E;border:1px solid #2E3248;border-radius:18px;padding:40px;width:100%;max-width:380px;box-shadow:0 24px 64px rgba(0,0,0,.6)">
         <div style="text-align:center;margin-bottom:28px">
-          <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#F07830,#C85E1C);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;box-shadow:0 4px 16px rgba(240,120,48,.3)">
-            ${S.config.logo?`<img src="${S.config.logo}" style="width:56px;height:56px;border-radius:14px;object-fit:contain">`:`<span style="color:#fff;font-weight:800;font-size:22px">K</span>`}
-          </div>
+          <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#F07830,#C85E1C);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;box-shadow:0 4px 16px rgba(240,120,48,.3)">${logoHTML}</div>
           <h1 style="color:#F0ECE8;font-size:18px;font-weight:700;margin-bottom:4px">Kolping Estadual de São Paulo</h1>
-          <p style="color:#5A6080;font-size:13px">Recibos</p>
+          <p style="color:#5A6080;font-size:13px">${titulos[modo]}</p>
         </div>
-        <div style="margin-bottom:20px">
-          <label style="display:block;font-size:11px;font-weight:700;color:#8A8FA8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Senha de acesso</label>
-          <input id="loginInput" type="password" placeholder="Digite sua senha" style="width:100%;padding:12px 14px;background:#242838;border:1.5px solid #2E3248;border-radius:9px;color:#F0ECE8;font-size:15px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')fazerLogin()">
-          <div id="loginErro" style="color:#FF5263;font-size:12px;margin-top:8px;display:none">Senha incorreta. Tente novamente.</div>
-        </div>
-        <button onclick="fazerLogin()" style="width:100%;padding:12px;background:linear-gradient(135deg,#F07830,#C85E1C);color:#fff;border:0;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(240,120,48,.3)">Entrar</button>
+        <div id="au_msg" style="display:none;padding:10px 14px;border-radius:9px;font-size:13px;margin-bottom:16px"></div>
+        ${campos}
+        ${botao}
+        ${links}
       </div>
     </div>`;
-  setTimeout(()=>document.getElementById("loginInput")&&document.getElementById("loginInput").focus(),100);
+  setTimeout(()=>{const e=document.getElementById(modo==="cadastro"?"au_nome":"au_email");if(e)e.focus();},100);
 }
-function fazerLogin(){
-  const input=document.getElementById("loginInput");
-  if(!input)return;
-  const val=input.value.trim();
-  if(val===S.config.senha){
-    sessionStorage.setItem("kolping_auth",val);
-    _autenticado=true;
-    location.reload();
-  }else{
-    const erro=document.getElementById("loginErro");
-    if(erro)erro.style.display="block";
-    input.value="";input.focus();
-    input.style.borderColor="#FF5263";
-    setTimeout(()=>{if(input)input.style.borderColor="#2E3248";},1000);
+function authMsg(txt,tipo){
+  const el=document.getElementById("au_msg");if(!el)return;
+  el.style.display="block";
+  el.textContent=txt;
+  if(tipo==="erro"){el.style.background="rgba(255,82,99,.12)";el.style.color="#FF5263";el.style.border="1px solid rgba(255,82,99,.3)";}
+  else if(tipo==="ok"){el.style.background="rgba(34,201,132,.12)";el.style.color="#22C984";el.style.border="1px solid rgba(34,201,132,.25)";}
+  else{el.style.background="rgba(245,200,66,.12)";el.style.color="#F5C842";el.style.border="1px solid rgba(245,200,66,.25)";}
+}
+async function authLogin(){
+  const email=(document.getElementById("au_email")?.value||"").trim();
+  const senha=document.getElementById("au_senha")?.value||"";
+  if(!email||!senha){authMsg("Preencha e-mail e senha.","erro");return;}
+  authMsg("Entrando…","info");
+  const{data,error}=await sb.auth.signInWithPassword({email,password:senha});
+  if(error){
+    if(error.message.includes("Email not confirmed"))authMsg("Confirme seu e-mail antes de entrar. Verifique sua caixa de entrada.","erro");
+    else if(error.message.includes("Invalid login"))authMsg("E-mail ou senha incorretos.","erro");
+    else authMsg("Erro: "+error.message,"erro");
+    return;
   }
+  // verificar aprovação
+  const{data:perfil}=await sb.from("profiles").select("*").eq("id",data.user.id).maybeSingle();
+  if(perfil&&!perfil.aprovado){
+    await sb.auth.signOut();
+    authMsg("Sua conta ainda não foi aprovada por um administrador.","erro");
+    return;
+  }
+  location.reload();
+}
+async function authCadastro(){
+  const nome=(document.getElementById("au_nome")?.value||"").trim();
+  const cargo=(document.getElementById("au_cargo")?.value||"").trim();
+  const email=(document.getElementById("au_email")?.value||"").trim();
+  const senha=document.getElementById("au_senha")?.value||"";
+  if(!nome||!email||!senha){authMsg("Preencha nome, e-mail e senha.","erro");return;}
+  if(senha.length<6){authMsg("A senha deve ter no mínimo 6 caracteres.","erro");return;}
+  authMsg("Criando conta…","info");
+  try{
+    const{data,error}=await sb.auth.signUp({email,password:senha,options:{data:{nome,cargo}}});
+    if(error){
+      const msg=error.message||error.error_description||JSON.stringify(error)||"erro desconhecido";
+      authMsg("Erro ao criar conta: "+msg,"erro");
+      console.error("Erro signUp:",error);
+      return;
+    }
+    authMsg("Conta criada! Verifique seu e-mail para confirmar o cadastro. Após confirmar, faça login (o primeiro usuário é aprovado automaticamente).","ok");
+  }catch(e){
+    authMsg("Erro inesperado: "+(e.message||JSON.stringify(e)),"erro");
+    console.error(e);
+  }
+}
+async function authRecuperar(){
+  const email=(document.getElementById("au_email")?.value||"").trim();
+  if(!email){authMsg("Digite seu e-mail.","erro");return;}
+  authMsg("Enviando…","info");
+  const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.href});
+  if(error){authMsg("Erro: "+error.message,"erro");return;}
+  authMsg("Link enviado! Verifique seu e-mail para redefinir a senha.","ok");
+}
+async function fazerLogout(){
+  await sb.auth.signOut();
+  location.reload();
+}
+async function aprovarUsuario(id){
+  const{error}=await sb.from("profiles").update({aprovado:true}).eq("id",id);
+  if(error){toast("Erro ao aprovar: "+error.message);return;}
+  toast("Usuário aprovado!");
+  renderConfig();
 }
 
 /* ============ SESSÃO AUTOMÁTICA ============ */
@@ -2620,71 +3383,305 @@ function renderGraficoInadimplencia(c,ano){
   }
   bd.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${svg}</svg>`;
   card.appendChild(bd);c.appendChild(card);
+  wrapGraficoComAcoes(card,()=>bd.querySelector("svg"),"inadimplencia_historica_"+ano,"#0F1117");
 }
 
 /* ============ EXPORTAR RELATÓRIO EM PDF ============ */
+/* ============ EXTRATO INDIVIDUAL POR CK (PDF) ============ */
+async function gerarExtratoCK(coId){
+  const co=comunidade(coId);if(!co)return;
+  if(!window.html2canvas||!window.jspdf){toast("Biblioteca PDF não carregada. Verifique sua conexão.");return;}
+  toast("Gerando extrato em PDF…");
+  const anos=[...new Set([ANO_ATUAL,...Object.keys(co.associadosPorAno||{}).map(Number),...S.recibos.filter(r=>r.pagadorId===coId).map(r=>r.data?+r.data.slice(0,4):ANO_ATUAL)])].sort((a,b)=>a-b);
+  const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===coId).sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+  const totalGeral=recs.reduce((s,r)=>s+(+r.total||0),0);
+
+  // resumo por ano
+  const resumoAnos=anos.map(a=>{
+    const recsAno=recs.filter(r=>r.data&&+r.data.slice(0,4)===a);
+    const totalAno=recsAno.reduce((s,r)=>s+(+r.total||0),0);
+    const tot=assocAno(co,a);
+    const mesesPagos=MESES.filter((_,mi)=>getMesSit(coId,a,mi,"solidariedade").status==="pago").length;
+    const socPago=getMesSit(coId,a,0,"societaria").status==="pago";
+    return{ano:a,total:totalAno,associados:tot,mesesPagos,socPago};
+  });
+
+  const div=document.createElement("div");
+  div.style.cssText="position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:32px;font-family:Inter,sans-serif;z-index:-1;color:#1A1614";
+  div.innerHTML=`
+    <div style="display:flex;align-items:center;gap:14px;border-bottom:3px solid #D96A14;padding-bottom:14px;margin-bottom:20px">
+      ${S.config.logo?`<img src="${S.config.logo}" style="width:48px;height:48px;border-radius:8px;object-fit:contain">`:`<div style="width:48px;height:48px;border-radius:8px;background:#FBEFE2;display:flex;align-items:center;justify-content:center;color:#D96A14;font-weight:700;font-size:20px">K</div>`}
+      <div>
+        <h1 style="font-size:18px;font-weight:800;margin:0">${esc(S.config.razao)}</h1>
+        <p style="font-size:11px;color:#8A7E74;margin:2px 0 0">CNPJ ${esc(S.config.cnpj)} · ${esc(S.config.endereco)}</p>
+      </div>
+    </div>
+    <h2 style="font-size:16px;font-weight:700;margin:0 0 4px">Extrato Financeiro — ${esc(co.nome)}</h2>
+    <p style="font-size:12px;color:#8A7E74;margin:0 0 20px">CNPJ ${esc(co.cnpj||"não informado")} · Gerado em ${fmtDateBR(new Date().toISOString().slice(0,10))}</p>
+
+    <div style="display:flex;gap:16px;margin-bottom:24px">
+      <div style="flex:1;background:#F6F3EF;border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#8A7E74;font-weight:700">Total arrecadado (todos os anos)</div>
+        <div style="font-size:22px;font-weight:800;color:#D96A14;margin-top:4px">${brl(totalGeral)}</div>
+      </div>
+      <div style="flex:1;background:#F6F3EF;border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#8A7E74;font-weight:700">Total de recibos emitidos</div>
+        <div style="font-size:22px;font-weight:800;color:#1A1614;margin-top:4px">${recs.length}</div>
+      </div>
+      <div style="flex:1;background:#F6F3EF;border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#8A7E74;font-weight:700">Associados (${ANO_ATUAL})</div>
+        <div style="font-size:22px;font-weight:800;color:#1A1614;margin-top:4px">${assocAno(co,ANO_ATUAL)}</div>
+      </div>
+    </div>
+
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:#1A1614">Resumo por ano</h3>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:11px">
+      <thead><tr style="background:#F6F3EF">
+        <th style="padding:7px 10px;text-align:left;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Ano</th>
+        <th style="padding:7px 10px;text-align:center;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Associados</th>
+        <th style="padding:7px 10px;text-align:center;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Meses Sol. pagos</th>
+        <th style="padding:7px 10px;text-align:center;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Societária</th>
+        <th style="padding:7px 10px;text-align:right;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Total pago</th>
+      </tr></thead>
+      <tbody>${resumoAnos.map(r=>`<tr style="border-bottom:1px solid #F0EBE3">
+        <td style="padding:6px 10px;font-weight:600">${r.ano}</td>
+        <td style="padding:6px 10px;text-align:center">${r.associados}</td>
+        <td style="padding:6px 10px;text-align:center;color:${r.mesesPagos===12?"#1E7A52":r.mesesPagos>0?"#A8500C":"#9A8878"};font-weight:600">${r.mesesPagos}/12</td>
+        <td style="padding:6px 10px;text-align:center;color:${r.socPago?"#1E7A52":"#C0392F"};font-weight:700">${r.socPago?"✓":"✗"}</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:600">${brl(r.total)}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:#1A1614">Histórico de recibos</h3>
+    ${recs.length?`<table style="width:100%;border-collapse:collapse;font-size:10.5px">
+      <thead><tr style="background:#F6F3EF">
+        <th style="padding:6px 8px;text-align:left;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Nº</th>
+        <th style="padding:6px 8px;text-align:left;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Data</th>
+        <th style="padding:6px 8px;text-align:left;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Referência</th>
+        <th style="padding:6px 8px;text-align:left;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Forma</th>
+        <th style="padding:6px 8px;text-align:right;font-weight:700;color:#5A4E46;border-bottom:2px solid #E4DDD3">Valor</th>
+      </tr></thead>
+      <tbody>${recs.map(r=>`<tr style="border-bottom:1px solid #F3EEE8">
+        <td style="padding:5px 8px">${numFmt(r)}</td>
+        <td style="padding:5px 8px">${fmtDateBR(r.data)}</td>
+        <td style="padding:5px 8px;color:#5A4E46">${esc(resumoRef(r))}</td>
+        <td style="padding:5px 8px;color:#5A4E46">${esc(r.formaPag)}</td>
+        <td style="padding:5px 8px;text-align:right;font-weight:600">${brl(r.total)}</td>
+      </tr>`).join("")}</tbody>
+    </table>`:`<p style="font-size:12px;color:#9A8878">Nenhum recibo emitido até o momento.</p>`}
+
+    <div style="margin-top:24px;padding-top:12px;border-top:1px solid #EDE8E0;font-size:9.5px;color:#A89E92;text-align:center">
+      ${esc(S.config.razao)} · CNPJ ${esc(S.config.cnpj)} · Documento emitido eletronicamente em ${fmtDateBR(new Date().toISOString().slice(0,10))}
+    </div>`;
+  document.body.appendChild(div);
+  await new Promise(res=>setTimeout(res,400));
+  try{
+    const canvas=await html2canvas(div,{scale:1.8,backgroundColor:"#fff",logging:false,useCORS:true});
+    document.body.removeChild(div);
+    const{jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+    const imgW=190,imgH=(canvas.height*imgW)/canvas.width;
+    const pageH=277;
+    let heightLeft=imgH,position=10;
+    pdf.addImage(canvas.toDataURL("image/jpeg",.95),"JPEG",10,position,imgW,imgH);
+    heightLeft-=pageH;
+    while(heightLeft>0){
+      position=heightLeft-imgH+10;
+      pdf.addPage();
+      pdf.addImage(canvas.toDataURL("image/jpeg",.95),"JPEG",10,position,imgW,imgH);
+      heightLeft-=pageH;
+    }
+    pdf.save(`Extrato_${co.nome.replace(/\s+/g,"_").slice(0,40)}.pdf`);
+    toast("Extrato em PDF gerado com sucesso!");
+  }catch(e){if(document.body.contains(div))document.body.removeChild(div);console.error(e);toast("Erro ao gerar PDF.");}
+}
+
 async function exportarRelatorioPDF(){
-  if(!window.html2canvas||!window.jspdf){toast("Biblioteca PDF não carregada.");return;}
+  if(!window.html2canvas||!window.jspdf){toast("Biblioteca PDF não carregada. Verifique sua conexão.");return;}
+  toast("Gerando PDF do relatório…");
   const ano=_relAno;
   const div=document.createElement("div");
-  div.style.cssText="position:fixed;left:-9999px;top:0;width:1100px;background:#fff;padding:32px;font-family:Inter,sans-serif;z-index:-1";
-  div.innerHTML=`<h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#1A1614">Relatório Anual — ${ano}</h1>
-    <p style="font-size:13px;color:#8A7E74;margin-bottom:20px">Kolping Estadual de São Paulo · CNPJ ${esc(S.config.cnpj)} · Gerado em ${fmtDateBR(new Date().toISOString().slice(0,10))}</p>
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr style="background:#F6F3EF">${["Comunidade","Assoc.",`Soc.${ano}`,...MESES_ABV,"Total pago"].map(h=>`<th style="padding:8px;border:1px solid #E4DDD3;text-align:left;font-weight:700;color:#5A4E46">${h}</th>`).join("")}</tr></thead>
-      <tbody>${[...S.comunidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(co=>{
-        const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===co.id);
-        const tot=assocAno(co,ano);
-        const socPago=recs.some(r=>r.itens.some(it=>it.tipo==="societaria"&&it.ano===ano));
-        const ovSoc=getOverride(co.id,ano,0,"societaria");
-        const socSt=ovSoc?ovSoc.status:(socPago?"pago":"atraso");
-        const solSt=MESES.map((_,mi)=>{const ov=getOverride(co.id,ano,mi,"solidariedade");if(ov)return ov.status;return recs.some(r=>r.itens.some(it=>it.tipo==="solidariedade"&&(it.meses||[]).some(m=>m.mes===mi&&m.ano===ano)))?"pago":"—";});
-        const totPago=recs.reduce((s,r)=>s+(r.data&&r.data.startsWith(ano+"")?(+r.total||0):0),0);
-        const cor=s=>s==="pago"?"#1E7A52":s==="atraso"?"#C0392F":"#9A8878";
-        const emoji=s=>s==="pago"?"✓":s==="atraso"?"✗":"—";
-        return `<tr><td style="padding:7px 8px;border:1px solid #E4DDD3;font-weight:500">${esc(co.nome)}</td>
-          <td style="padding:7px 8px;border:1px solid #E4DDD3;text-align:center">${tot}</td>
-          <td style="padding:7px 8px;border:1px solid #E4DDD3;text-align:center;color:${cor(socSt)};font-weight:700">${emoji(socSt)}</td>
-          ${solSt.map(s=>`<td style="padding:7px 8px;border:1px solid #E4DDD3;text-align:center;color:${cor(s)};font-weight:600">${emoji(s)}</td>`).join("")}
-          <td style="padding:7px 8px;border:1px solid #E4DDD3;text-align:right;font-weight:600">${brl(totPago)}</td></tr>`;
-      }).join("")}</tbody>
+  div.style.cssText="position:fixed;left:-9999px;top:0;width:1200px;background:#fff;padding:28px;font-family:Inter,sans-serif;z-index:-1;color:#1A1614";
+  const cores={pago:"#1E7A52",atraso:"#C0392F","—":"#9A8878",isento:"#6B5E54"};
+  const emojis={pago:"✓",atraso:"✗","—":"—",isento:"○"};
+  const linhas=[...S.comunidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(co=>{
+    const recs=S.recibos.filter(r=>r.pagadorTipo==="comunidade"&&r.pagadorId===co.id);
+    const tot=assocAno(co,ano);
+    const socPago=recs.some(r=>r.itens.some(it=>it.tipo==="societaria"&&it.ano===ano));
+    const ovSoc=getOverride(co.id,ano,0,"societaria");
+    const socSt=ovSoc?ovSoc.status:(socPago?"pago":"atraso");
+    const solSt=MESES.map((_,mi)=>{const ov=getOverride(co.id,ano,mi,"solidariedade");if(ov)return ov.status;return recs.some(r=>r.itens.some(it=>it.tipo==="solidariedade"&&(it.meses||[]).some(m=>m.mes===mi&&m.ano===ano)))?"pago":"—";});
+    const totPago=recs.reduce((s,r)=>s+(r.data&&r.data.startsWith(ano+"")?(+r.total||0):0),0);
+    return `<tr style="border-bottom:1px solid #E4DDD3">
+      <td style="padding:5px 6px;font-size:10px;font-weight:500;color:#1A1614">${esc(co.nome)}</td>
+      <td style="padding:5px 6px;font-size:10px;text-align:center;color:#5A4E46">${tot}</td>
+      <td style="padding:5px 6px;font-size:11px;text-align:center;color:${cores[socSt]};font-weight:700">${emojis[socSt]}</td>
+      ${solSt.map(s=>`<td style="padding:5px 4px;font-size:11px;text-align:center;color:${cores[s]||"#9A8878"};font-weight:600">${emojis[s]||s}</td>`).join("")}
+      <td style="padding:5px 6px;font-size:10px;text-align:right;font-weight:600;color:#1A1614">${brl(totPago)}</td>
+    </tr>`;
+  }).join("");
+  div.innerHTML=`
+    <div style="border-bottom:3px solid #D96A14;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end">
+      <div><h1 style="font-size:18px;font-weight:800;color:#1A1614;margin:0">Relatório Anual — ${ano}</h1>
+      <p style="font-size:11px;color:#8A7E74;margin:3px 0 0">Kolping Estadual de São Paulo · CNPJ ${esc(S.config.cnpj)} · Gerado em ${fmtDateBR(new Date().toISOString().slice(0,10))}</p></div>
+      <div style="font-size:11px;color:#8A7E74;text-align:right">${S.comunidades.length} comunidades</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#F6F3EF">
+        ${["Comunidade","Assoc.",`Soc.${ano}`,...MESES_ABV,"Total pago"].map(h=>`<th style="padding:6px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#5A4E46;font-weight:700;border-bottom:2px solid #E4DDD3;text-align:${h==="Comunidade"?"left":"center"}">${h}</th>`).join("")}
+      </tr></thead>
+      <tbody>${linhas}</tbody>
     </table>`;
   document.body.appendChild(div);
-  await new Promise(res=>setTimeout(res,300));
+  await new Promise(res=>setTimeout(res,400));
   try{
-    const canvas=await html2canvas(div,{scale:1.5,backgroundColor:"#fff",logging:false});
+    const canvas=await html2canvas(div,{scale:1.8,backgroundColor:"#fff",logging:false,useCORS:true});
     document.body.removeChild(div);
     const{jsPDF}=window.jspdf;
     const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
-    const imgW=277,imgH=(canvas.height*imgW)/canvas.width;
-    let y=10;
-    pdf.addImage(canvas.toDataURL("image/jpeg",.92),"JPEG",10,y,imgW,Math.min(imgH,190));
+    const imgW=287,imgH=(canvas.height*imgW)/canvas.width;
+    const pages=Math.ceil(imgH/197);
+    for(let p=0;p<pages;p++){
+      if(p>0)pdf.addPage();
+      pdf.addImage(canvas.toDataURL("image/jpeg",.95),"JPEG",5,5-p*197,imgW,imgH);
+    }
     pdf.save(`Relatorio_Kolping_${ano}.pdf`);
-    toast("Relatório PDF exportado!");
-  }catch(e){document.body.removeChild(div);toast("Erro ao gerar PDF.");}
+    toast("PDF exportado com sucesso!");
+  }catch(e){if(document.body.contains(div))document.body.removeChild(div);console.error(e);toast("Erro ao gerar PDF.");}
+}
+
+/* ============ BADGE DE ENVIO ============ */
+function mkBadgeEnvio(r,onUpdate){
+  const btn=document.createElement("button");
+  function render(){
+    btn.className="badge-enviado "+(r.enviado?"ok":"pendente");
+    btn.innerHTML=r.enviado
+      ?`<span style="font-size:10px">●</span> Enviado`
+      :`<span style="font-size:10px">●</span> Não enviado`;
+    btn.title=r.enviado?"Clique para marcar como não enviado":"Clique para marcar como enviado e gerar PDF";
+  }
+  render();
+  btn.addEventListener("click",e=>{
+    e.stopPropagation();
+    if(!r.enviado){
+      r.enviado=true;save();render();
+      if(onUpdate)onUpdate();
+      gerarPDF(r);
+      toast("Recibo marcado como enviado — PDF gerado!");
+    }else{
+      confirmBox("Desmarcar como enviado?",()=>{
+        r.enviado=false;save();render();
+        if(onUpdate)onUpdate();
+        toast("Recibo marcado como não enviado.");
+      });
+    }
+  });
+  return btn;
+}
+
+/* ============ DOWNLOAD/COMPARTILHAR GRÁFICOS ============ */
+function baixarGraficoSVG(svgEl,nomeArquivo,bgColor){
+  bgColor=bgColor||"#fff";
+  const svgData=new XMLSerializer().serializeToString(svgEl);
+  const canvas=document.createElement("canvas");
+  const viewBox=svgEl.getAttribute("viewBox").split(" ").map(Number);
+  const scale=2;
+  canvas.width=viewBox[2]*scale;canvas.height=viewBox[3]*scale;
+  const ctx=canvas.getContext("2d");
+  const img=new Image();
+  const svgBlob=new Blob([svgData],{type:"image/svg+xml;charset=utf-8"});
+  const url=URL.createObjectURL(svgBlob);
+  img.onload=()=>{
+    ctx.fillStyle=bgColor;ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob=>{
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download=nomeArquivo+".png";
+      a.click();
+      toast("Gráfico baixado: "+nomeArquivo+".png");
+    },"image/png");
+  };
+  img.src=url;
+}
+function compartilharGraficoSVG(svgEl,nomeArquivo,bgColor){
+  bgColor=bgColor||"#fff";
+  const svgData=new XMLSerializer().serializeToString(svgEl);
+  const canvas=document.createElement("canvas");
+  const viewBox=svgEl.getAttribute("viewBox").split(" ").map(Number);
+  const scale=2;
+  canvas.width=viewBox[2]*scale;canvas.height=viewBox[3]*scale;
+  const ctx=canvas.getContext("2d");
+  const img=new Image();
+  const svgBlob=new Blob([svgData],{type:"image/svg+xml;charset=utf-8"});
+  const url=URL.createObjectURL(svgBlob);
+  img.onload=()=>{
+    ctx.fillStyle=bgColor;ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(async blob=>{
+      const file=new File([blob],nomeArquivo+".png",{type:"image/png"});
+      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+        try{await navigator.share({files:[file],title:nomeArquivo});}catch(e){}
+      }else{
+        // fallback: baixar
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=nomeArquivo+".png";
+        a.click();
+        toast("Compartilhamento não suportado neste navegador. Imagem baixada.");
+      }
+    },"image/png");
+  };
+  img.src=url;
+}
+function wrapGraficoComAcoes(cardEl,svgGetter,nomeArquivo,bgColor){
+  // adiciona uma barra de ações no canto do card com baixar/compartilhar
+  const hd=cardEl.querySelector(".hd");
+  if(!hd)return;
+  const acoes=el("div",{style:"display:flex;gap:6px"});
+  const btnDown=el("button",{title:"Baixar como imagem",style:"background:none;border:1px solid var(--line);border-radius:7px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-soft);transition:all .15s",onclick:()=>{const svg=svgGetter();if(svg)baixarGraficoSVG(svg,nomeArquivo,bgColor);}});
+  btnDown.innerHTML=`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+  btnDown.addEventListener("mouseover",()=>{btnDown.style.borderColor="var(--brand)";btnDown.style.color="var(--brand)";});
+  btnDown.addEventListener("mouseout",()=>{btnDown.style.borderColor="var(--line)";btnDown.style.color="var(--ink-soft)";});
+  const btnShare=el("button",{title:"Compartilhar",style:"background:none;border:1px solid var(--line);border-radius:7px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-soft);transition:all .15s",onclick:()=>{const svg=svgGetter();if(svg)compartilharGraficoSVG(svg,nomeArquivo,bgColor);}});
+  btnShare.innerHTML=`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+  btnShare.addEventListener("mouseover",()=>{btnShare.style.borderColor="var(--brand)";btnShare.style.color="var(--brand)";});
+  btnShare.addEventListener("mouseout",()=>{btnShare.style.borderColor="var(--line)";btnShare.style.color="var(--ink-soft)";});
+  acoes.append(btnDown,btnShare);
+  hd.appendChild(acoes);
 }
 
 /* ============ INIT ============ */
-buildNav();
-// verificar senha de acesso
-if(!checkSenha()){telaLogin();}
-else{
+async function iniciarApp(){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session){
+    telaAuth("login");
+    return;
+  }
+  _sbUser=session.user;
+  // verificar aprovação do perfil
+  const{data:perfil}=await sb.from("profiles").select("*").eq("id",_sbUser.id).maybeSingle();
+  if(perfil&&!perfil.aprovado){
+    await sb.auth.signOut();
+    telaAuth("login");
+    setTimeout(()=>authMsg("Sua conta ainda não foi aprovada por um administrador.","erro"),200);
+    return;
+  }
+  _sbPerfil=perfil;
+  // carregar dados do Supabase
+  await carregarDados();
+  migrate();fixCargo();
+  // montar interface
+  buildNav();
   go("dashboard");setTimeout(renderAvisos,100);
   aplicarTema();
   const _tBtn=document.getElementById("temaBtn");
   if(_tBtn)_tBtn.textContent=_temaEscuro?"☀ Tema claro":"🌙 Tema escuro";
-  initInactTimer();
-  // reconectar Dropbox se havia token salvo
-  (function checkDropboxToken(){
-    const saved=localStorage.getItem("kolping_dbx_token")||S.config.dropboxToken||"";
-    if(saved){
-      _dbxToken=saved;
-      S.config.dropboxToken=saved;
-      localStorage.setItem("kolping_dbx_token",saved);
-      dbxSetStatus("connected","Dropbox conectado ✓");
-      dbxSyncAuto();
-    }
-  })();
+  updateBrandLogo();
+  updSideFoot();
+  sbSetStatus("ok");
 }
 function updateBrandLogo(){
   const el=document.getElementById("brandLogo");
@@ -2692,14 +3689,26 @@ function updateBrandLogo(){
   if(S.config.logo){el.innerHTML=`<img src="${S.config.logo}" alt="logo">`;}
   else{el.textContent="K";}
 }
-updateBrandLogo();
-// rodapé sidebar com info de backup
-(function updSideFoot(){
+function updSideFoot(){
   const el=document.getElementById("sidefoot");if(!el)return;
-  const ult=S.config.ultimoBackup;
-  const dias=ult?Math.floor((Date.now()-new Date(ult).getTime())/(1000*60*60*24)):null;
-  el.innerHTML="Dados salvos neste navegador."+(dias===null?"<br><span style='color:#F5C842'>Sem backup realizado.</span>":dias===0?"<br><span style='color:#8fbc8f'>Backup hoje.</span>":dias<7?`<br>Último backup: ${dias}d atrás.`:`<br><span style='color:#F5C842'>Backup há ${dias}d — faça um novo!</span>`);
-})();
+  const nome=_sbPerfil?.nome||_sbUser?.email||"";
+  el.innerHTML=`<div style="font-size:12px;color:var(--ink-soft)">Conectado como<br><b style="color:var(--ink)">${esc(nome)}</b></div>`+
+    `<div id="sbStatus" style="font-size:11px;margin-top:6px"></div>`+
+    `<button onclick="fazerLogout()" style="margin-top:8px;width:100%;padding:7px;background:transparent;border:1px solid var(--line);border-radius:7px;color:var(--ink-soft);font-size:12px;cursor:pointer">Sair</button>`;
+}
+// escutar mudança de auth (ex: recuperação de senha)
+sb.auth.onAuthStateChange((event)=>{
+  if(event==="PASSWORD_RECOVERY"){
+    const novaSenha=prompt("Digite sua nova senha (mínimo 6 caracteres):");
+    if(novaSenha&&novaSenha.length>=6){
+      sb.auth.updateUser({password:novaSenha}).then(({error})=>{
+        if(error)alert("Erro: "+error.message);
+        else{alert("Senha atualizada! Faça login novamente.");location.reload();}
+      });
+    }
+  }
+});
+iniciarApp();
 </script>
 </body>
 </html>

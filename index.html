@@ -275,11 +275,7 @@ tbody tr:hover{background:rgba(240,120,48,.06)}
       <div class="mark"><div class="k" id="brandLogo">K</div><div><div class="name">Kolping Estadual de São Paulo</div><div class="sub">Recibos</div></div></div>
     </div>
     <nav class="nav" id="nav"></nav>
-    <div class="side-foot" id="sidefoot">Dados salvos neste navegador.<br>Faça backup em Configurações.</div>
-    <div id="driveStatusBtn" class="drive-status disconnected" onclick="toggleDriveLogin()">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 2L2 7l4 5-4 5 4 5 4-5-4-5 4-5zm12 0l4 5-4 5 4 5-4 5-4-5 4-5-4-5z"/></svg>
-      <span id="driveStatusTxt">Conectar Dropbox</span>
-    </div>
+    <div class="side-foot" id="sidefoot"></div>
   </aside>
   <div class="scrim" id="scrim" onclick="toggleMenu(false)"></div>
 
@@ -2268,7 +2264,7 @@ function renderConfig(){
   const card5=el("div",{class:"card"});card5.style.marginTop="20px";
   card5.appendChild(el("div",{class:"hd"},el("h2",{},"Backup e restauração")));
   const bd4=el("div",{class:"bd"});
-  bd4.innerHTML=`<p style="font-size:13.5px;color:var(--ink-soft);margin-bottom:16px">Os dados ficam salvos neste navegador. Faça backup regularmente e use o arquivo para transferir entre computadores.</p>`;
+  bd4.appendChild(el("p",{style:"font-size:13.5px;color:var(--ink-soft);margin-bottom:16px"},"Faça backup dos dados em arquivo para segurança extra ou para importar comunidades de uma planilha."));
   const br=el("div",{style:"display:flex;gap:10px;flex-wrap:wrap"});
   br.append(
     el("button",{class:"btn",onclick:exportData},"⬇ Baixar backup (.json)"),
@@ -2285,9 +2281,7 @@ function renderConfig(){
     el("button",{class:"btn ghost danger",onclick:resetData},"Apagar todos os dados")
   );
   bd4.appendChild(br);
-  bd4.innerHTML+=`<p style="font-size:12px;color:var(--ink-muted);margin-top:12px">Para importar CKs: use um CSV ou Excel com colunas <b>nome, cnpj, efetivos, cooperadores</b>.</p>`;
-  bd4.appendChild(el("input",{type:"file",id:"importFile",accept:".json",style:"display:none",onchange:importData}));
-  bd4.appendChild(el("input",{type:"file",id:"importCKFile",accept:".csv,.xlsx,.xls",style:"display:none",onchange:importarCKs}));
+  bd4.appendChild(el("p",{style:"font-size:12px;color:var(--ink-muted);margin-top:12px"},"Para importar CKs: use um CSV ou Excel com colunas nome, cnpj, efetivos, cooperadores."));
   card5.appendChild(bd4);c.appendChild(card5);
 
   // Card sincronização Supabase
